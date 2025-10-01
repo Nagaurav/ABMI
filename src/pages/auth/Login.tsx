@@ -40,20 +40,23 @@ export const Login = () => {
     <div className="min-h-screen flex items-center justify-center bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
         {/* Perfectly centered circular logo */}
-        <div className="flex justify-center mb-6">
+        <div className="flex justify-center mb-8">
           <div className="relative w-32 h-32">
-            <div className="absolute inset-0 bg-white rounded-full shadow-lg overflow-hidden p-2">
-              <div className="w-full h-full flex items-center justify-center">
+            <div className="absolute inset-0 bg-white rounded-full shadow-lg overflow-hidden p-2 flex items-center justify-center">
+              <div className="relative w-full h-full rounded-full overflow-hidden">
                 <img 
                   src="/images/Gemini_Generated_Image_8zv1rl8zv1rl8zv1.png" 
                   alt="Company Logo" 
-                  className="max-w-full max-h-full object-contain"
+                  className="w-full h-full object-cover"
                   style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    minWidth: '100%',
+                    minHeight: '100%',
                     width: 'auto',
-                    height: 'auto',
-                    maxWidth: '85%',
-                    maxHeight: '85%',
-                    objectFit: 'contain'
+                    height: 'auto'
                   }}
                   onError={(e) => {
                     const target = e.target as HTMLImageElement;
