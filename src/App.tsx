@@ -9,7 +9,6 @@ import LiveInterview from './pages/LiveInterview';
 import Analysis from './pages/Analysis';
 import Profile from './pages/Profile';
 import Settings from './pages/Settings';
-
 function App() {
   return (
     <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
@@ -18,6 +17,7 @@ function App() {
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/forgot-password" element={<div>Forgot Password Page - To be implemented</div>} />
 
           {/* Protected routes */}
           <Route
