@@ -148,7 +148,7 @@ export interface Database {
           created_at?: string | null
           updated_at?: string | null
         }
-      }
+      },
       user_sessions: {
         Row: {
           id: string
@@ -170,6 +170,52 @@ export interface Database {
           user_agent?: string
           created_at?: string
           last_active?: string
+        }
+      },
+      resumes: {
+        Row: {
+          id: string
+          user_id: string
+          file_url: string
+          created_at: string
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          file_url: string
+          created_at?: string
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          file_url?: string
+          created_at?: string
+          updated_at?: string | null
+        }
+      },
+      interview_analysis: {
+        Row: {
+          id: string
+          interview_id: string
+          analysis: Json
+          created_at: string
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          interview_id: string
+          analysis: Json
+          created_at?: string
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          interview_id?: string
+          analysis?: Json
+          created_at?: string
+          updated_at?: string | null
         }
       }
     }

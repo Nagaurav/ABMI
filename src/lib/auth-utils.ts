@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { toast } from 'sonner';
+import type { Database } from './database.types';
 
 type AuthResponse = {
   success: boolean;
@@ -164,15 +165,29 @@ export const authUtils = {
   },
 
   // Update user profile
-  async updateProfile(userId: string, updates: any) {
+  async updateProfile(
+    userId: string, 
+    updates: Database['public']['Tables']['profiles']['Update']
+  ): Promise<Database['public']['Tables']['profiles']['Row']> {
     const { data, error } = await supabase
       .from('profiles')
-      .update(updates)
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString()
+      } as Database['public']['Tables']['profiles']['Update'])
       .eq('id', userId)
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error updating profile:', error);
+      throw error;
+    }
+    
+    if (!data) {
+      throw new Error('No data returned after profile update');
+    }
+    
     return data;
   },
 };

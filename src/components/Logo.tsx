@@ -1,30 +1,20 @@
-import React from 'react';
 
 export default function Logo() {
   return (
-    <div className="flex items-center justify-center mb-8">
-      <div className="relative">
-        <div className="absolute inset-0 bg-indigo-600 rounded-full animate-ping opacity-20"></div>
-        <div className="relative bg-indigo-600 rounded-full p-4">
-          <svg
-            className="w-12 h-12 text-white"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-            />
-          </svg>
+    <div className="flex flex-col items-center justify-center mb-8 space-y-4">
+      <div className="relative w-32 h-32">
+        <div className="absolute inset-0 rounded-full overflow-hidden border-4 border-indigo-500/20">
+          <img 
+            src="/images/Gemini_Generated_Image_8zv1rl8zv1rl8zv1.png" 
+            alt="AI Interview Coach Logo"
+            className="w-full h-full object-cover"
+          />
         </div>
+        <div className="absolute inset-0 rounded-full border-2 border-indigo-500/30 animate-pulse"></div>
       </div>
-      <h1 className="ml-4 text-3xl font-bold text-gray-100">
-        <span className="text-indigo-400">AI</span> Interview Training System
+      <h1 className="text-3xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
+        AI Interview Coach
       </h1>
     </div>
   );
-} 
+}
