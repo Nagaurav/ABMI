@@ -1,172 +1,215 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Interview, Feedback, Recording } from '../lib/types';
 import { useAuth } from '../hooks/useAuth';
 
-interface DashboardStats {
-  totalInterviews: number;
-  practiceHours: number;
+// Define the shape of the profile from Supabase
+interface Profile {
+  id: string;
+  email: string;
+  full_name: string | null;
+  created_at: string;
+  updated_at: string;
+  bio?: string;  // Added bio field since it exists in your database
+}
+
+export interface PerformanceDataPoint {
+  date: string;
+  score: number;
+}
+
+export interface InterviewHistoryItem {
+  interview_session_id: string;
+  date: string;
+  duration: number; // in seconds
+  score: number;
+  status: string;
+}
+
+export interface DashboardData {
+  name: string;
+  email: string;
   averageScore: number;
-  bestScore: number;
+  interviewsCompleted: number;
+  keyImprovementArea: string;
+  performanceHistory: PerformanceDataPoint[];
+  interviewHistory: InterviewHistoryItem[];
 }
 
-interface DashboardData {
-  stats: DashboardStats;
-  weeklyProgress: { date: string; score: number }[];
-  latestFeedback: Feedback[];
-  loading: boolean;
+interface UseDashboardReturn {
+  userData: DashboardData | null;
+  isLoading: boolean;
   error: string | null;
+  refetch: () => Promise<void>;
 }
 
-const MAX_RETRIES = 3;
-const RETRY_DELAY = 1000; // 1 second
-
-export function useDashboard(): DashboardData {
-  const [stats, setStats] = useState<DashboardStats>({
-    totalInterviews: 0,
-    practiceHours: 0,
-    averageScore: 0,
-    bestScore: 0,
-  });
-  const [weeklyProgress, setWeeklyProgress] = useState<{ date: string; score: number }[]>([]);
-  const [latestFeedback, setLatestFeedback] = useState<Feedback[]>([]);
-  const [loading, setLoading] = useState(true);
+export function useDashboard(): UseDashboardReturn {
+  const [userData, setUserData] = useState<DashboardData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { user } = useAuth();
 
-  useEffect(() => {
-    if (!user) return;
-
-    let retryCount = 0;
-    let mounted = true;
-
-    async function fetchWithRetry<T>(
-      operation: () => Promise<T>,
-      errorMessage: string
-    ): Promise<T | null> {
-      while (retryCount < MAX_RETRIES) {
-        try {
-          const result = await operation();
-          return result;
-        } catch (err) {
-          retryCount++;
-          console.error(`${errorMessage} (Attempt ${retryCount}/${MAX_RETRIES}):`, err);
-          
-          if (retryCount === MAX_RETRIES) {
-            throw new Error(`${errorMessage}: ${err.message}`);
-          }
-          
-          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * retryCount));
-        }
-      }
-      return null;
+  const fetchDashboardData = async () => {
+    if (!user) {
+      setIsLoading(false);
+      return;
     }
 
-    async function fetchDashboardData() {
-      if (!mounted) return;
-      
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      // Fetch user profile data with type assertion
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .select('full_name, email')
+        .eq('id', user.id)
+        .single<Profile>();
+
+      if (profileError) throw profileError;
+      if (!profileData) throw new Error('Profile not found');
+
+      let sessions: any[] = [];
+      let sessionsError: any = null;
+
       try {
-        setLoading(true);
-        setError(null);
+        // First, check if the table exists by making a test query
+        const { data: testData, error: testError } = await supabase
+          .from('interview_sessions')
+          .select('id')
+          .limit(1);
 
-        // Fetch interviews with retry
-        const { data: interviews, error: interviewsError } = await fetchWithRetry(
-          () => supabase
-            .from('interviews')
-            .select('*')
-            .eq('user_id', user.id)
-            .order('created_at', { ascending: false }),
-          'Failed to fetch interviews'
-        ) || { data: null, error: interviewsError };
+        if (testError) throw testError;
 
-        if (interviewsError) throw interviewsError;
-
-        // Calculate stats
-        const totalInterviews = interviews?.length || 0;
-        const scores = interviews?.map(i => i.score).filter(Boolean) || [];
-        const averageScore = scores.length > 0 
-          ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) 
-          : 0;
-        const bestScore = scores.length > 0 ? Math.max(...scores) : 0;
-
-        // Fetch recordings with retry
-        const { data: recordings } = await fetchWithRetry(
-          () => supabase
-            .from('recordings')
-            .select('duration')
-            .eq('user_id', user.id),
-          'Failed to fetch recordings'
-        ) || { data: null };
-
-        const practiceHours = recordings?.reduce((total, rec) => {
-          const duration = rec.duration ? parseFloat(rec.duration) : 0;
-          return total + duration;
-        }, 0) || 0;
-
-        // Fetch weekly progress
-        const oneWeekAgo = new Date();
-        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-
-        const { data: weeklyInterviews } = await fetchWithRetry(
-          () => supabase
-            .from('interviews')
-            .select('created_at, score')
-            .eq('user_id', user.id)
-            .gte('created_at', oneWeekAgo.toISOString())
-            .order('created_at', { ascending: true }),
-          'Failed to fetch weekly progress'
-        ) || { data: null };
-
-        const progress = weeklyInterviews?.map(interview => ({
-          date: new Date(interview.created_at).toLocaleDateString('en-US', { weekday: 'short' }),
-          score: interview.score || 0,
-        })) || [];
-
-        // Fetch latest feedback with retry
-        const { data: feedback } = await fetchWithRetry(
-          () => supabase
-            .from('feedback')
-            .select('*')
-            .eq('user_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(3),
-          'Failed to fetch feedback'
-        ) || { data: null };
-
-        if (mounted) {
-          setStats({
-            totalInterviews,
-            practiceHours: Math.round(practiceHours / 3600), // Convert seconds to hours
-            averageScore,
-            bestScore,
-          });
-          setWeeklyProgress(progress);
-          setLatestFeedback(feedback || []);
+        // If table exists, fetch the actual data
+        console.log('Fetching interview sessions for user:', user.id);
+        const { data, error } = await supabase
+          .from('interview_sessions')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
+        
+        console.log('Interview sessions response:', { data, error });
+        
+        if (error) throw error;
+        sessions = data || [];
+      } catch (err: any) {
+        console.error('Error fetching interview sessions:', err);
+        sessionsError = err;
+        
+        // If it's a 404, the table might not exist or have a different name
+        if (err.message && err.message.includes('404')) {
+          throw new Error('The interview sessions table was not found. Please check if the table name is correct or create the table in your Supabase database.');
         }
-      } catch (err) {
-        console.error('Error fetching dashboard data:', err);
-        if (mounted) {
-          setError(err.message || 'Failed to load dashboard data. Please check your connection and try again.');
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
+        
+        throw err;
       }
+      
+      // If no sessions, return empty data
+      if (!sessions || sessions.length === 0) {
+        console.log('No interview sessions found for user:', user.id);
+        const dashboardData: DashboardData = {
+          name: profileData.full_name || 'User',
+          email: profileData.email || user?.email || '',
+          averageScore: 0,
+          interviewsCompleted: 0,
+          keyImprovementArea: 'Start practicing to see your metrics',
+          performanceHistory: [],
+          interviewHistory: [],
+        };
+        setUserData(dashboardData);
+        return;
+      }
+
+      // Type assertion for sessions
+      const typedSessions = sessions as unknown as Array<{
+        id: string;
+        created_at: string;
+        duration_seconds?: number;
+        score?: number;
+        status?: string;
+        // Add other fields from your interview_sessions table
+      }>;
+
+      // Calculate metrics with proper null checks
+      const completedSessions = typedSessions.filter(s => s.status === 'completed');
+      const totalScore = completedSessions.reduce(
+        (sum, session) => sum + (typeof session.score === 'number' ? session.score : 0), 
+        0
+      );
+      
+      const averageScore = completedSessions.length > 0 
+        ? Math.round((totalScore / completedSessions.length) * 10) / 10 
+        : 0;
+
+      // Format interview history with proper null checks
+      const interviewHistory: InterviewHistoryItem[] = typedSessions.map(session => ({
+        interview_session_id: session.id,
+        date: session.created_at ? new Date(session.created_at).toISOString() : new Date().toISOString(),
+        duration: typeof session.duration_seconds === 'number' ? session.duration_seconds : 0,
+        score: typeof session.score === 'number' ? session.score : 0,
+        status: session.status || 'completed'
+      }));
+
+      // Generate performance history (last 7 days)
+      const performanceHistory: PerformanceDataPoint[] = [];
+      const now = new Date();
+      
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date(now);
+        date.setDate(date.getDate() - i);
+        const dateStr = date.toISOString().split('T')[0];
+        
+        const daySessions = completedSessions.filter(s => {
+          const sessionDate = s.created_at ? new Date(s.created_at).toISOString().split('T')[0] : '';
+          return sessionDate === dateStr;
+        });
+        
+        const dayScore = daySessions.length > 0
+          ? daySessions.reduce((sum, s) => sum + (typeof s.score === 'number' ? s.score : 0), 0) / daySessions.length
+          : 0;
+          
+        performanceHistory.push({
+          date: dateStr,
+          score: Math.round(dayScore * 10) / 10
+        });
+      }
+
+      // Determine key improvement area (simplified example)
+      let keyImprovementArea = 'Communication Skills';
+      if (averageScore < 5) {
+        keyImprovementArea = 'Technical Knowledge';
+      } else if (averageScore < 7) {
+        keyImprovementArea = 'Problem Solving';
+      }
+
+      // Construct the dashboard data with proper null checks
+      const dashboardData: DashboardData = {
+        name: profileData.full_name || 'User',
+        email: profileData.email || user?.email || '',
+        averageScore,
+        interviewsCompleted: completedSessions.length,
+        keyImprovementArea,
+        performanceHistory,
+        interviewHistory,
+      };
+
+      setUserData(dashboardData);
+    } catch (err: any) {
+      console.error('Dashboard fetch error:', err);
+      setError(err.message || 'Failed to load dashboard data');
+    } finally {
+      setIsLoading(false);
     }
+  };
 
+  useEffect(() => {
     fetchDashboardData();
-
-    return () => {
-      mounted = false;
-    };
   }, [user]);
 
   return {
-    stats,
-    weeklyProgress,
-    latestFeedback,
-    loading,
+    userData,
+    isLoading,
     error,
+    refetch: fetchDashboardData,
   };
 }

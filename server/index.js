@@ -5,6 +5,7 @@ import multer from 'multer';
 import fs from 'fs';
 import dotenv from 'dotenv';
 import pdf from 'pdf-parse';
+import dashboardRoutes from './routes/dashboard.js';
 dotenv.config();
 
 // ================== App setup ==================
@@ -36,6 +37,9 @@ app.get('*.ts', (req, res, next) => {
 
 // ================== Auth (email+password handled by frontend provider) ==================
 // No OTP endpoints
+
+// ================== Dashboard API Routes ==================
+app.use('/api/dashboard', dashboardRoutes);
 
 // ================== Resume upload setup ==================
 const upload = multer({ dest: 'uploads/' });

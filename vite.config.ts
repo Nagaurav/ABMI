@@ -4,6 +4,12 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+      '@lib': path.resolve(__dirname, './src/lib')
+    }
+  },
   optimizeDeps: {
     include: [
       '@tensorflow/tfjs-core',
@@ -55,11 +61,6 @@ export default defineConfig({
         }
       }
     }
-  },
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
   },
   json: {
     stringify: true

@@ -22,6 +22,8 @@ export interface Database {
           updated_at: string | null
           difficulty_level: string
           interview_type: string
+          session_date: string | null
+          status: string
         }
         Insert: {
           id?: string
@@ -35,6 +37,8 @@ export interface Database {
           updated_at?: string | null
           difficulty_level?: string
           interview_type?: string
+          session_date?: string | null
+          status?: string
         }
         Update: {
           id?: string
@@ -48,6 +52,8 @@ export interface Database {
           updated_at?: string | null
           difficulty_level?: string
           interview_type?: string
+          session_date?: string | null
+          status?: string
         }
       }
       feedback: {
@@ -64,6 +70,8 @@ export interface Database {
           answer_structure: number | null
           feedback_text: string[] | null
           created_at: string | null
+          overall_score: number | null
+          key_improvement_area: string | null
         }
         Insert: {
           id?: string
@@ -78,6 +86,8 @@ export interface Database {
           answer_structure?: number | null
           feedback_text?: string[] | null
           created_at?: string | null
+          overall_score?: number | null
+          key_improvement_area?: string | null
         }
         Update: {
           id?: string
@@ -92,6 +102,8 @@ export interface Database {
           answer_structure?: number | null
           feedback_text?: string[] | null
           created_at?: string | null
+          overall_score?: number | null
+          key_improvement_area?: string | null
         }
       }
       profiles: {
@@ -216,6 +228,38 @@ export interface Database {
           analysis?: Json
           created_at?: string
           updated_at?: string | null
+        }
+      },
+      user_settings: {
+        Row: {
+          id: string
+          theme: 'light' | 'dark'
+          language: string
+          sound_effects: boolean
+          notifications_enabled: boolean
+          email_notifications: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          theme?: 'light' | 'dark'
+          language?: string
+          sound_effects?: boolean
+          notifications_enabled?: boolean
+          email_notifications?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          theme?: 'light' | 'dark'
+          language?: string
+          sound_effects?: boolean
+          notifications_enabled?: boolean
+          email_notifications?: boolean
+          created_at?: string
+          updated_at?: string
         }
       }
     }

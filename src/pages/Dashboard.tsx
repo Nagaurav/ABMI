@@ -1,4 +1,3 @@
-import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AreaChart,
@@ -9,91 +8,40 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { useAuth } from '../hooks/useAuth';
-import { toast } from 'sonner';
+import { useDashboard } from '../hooks/useDashboard';
 import { motion } from 'framer-motion';
 import {
   ChartBarIcon,
   ClockIcon,
   StarIcon,
-  UserGroupIcon,
 } from '@heroicons/react/24/outline';
 
-interface InterviewStats {
-  totalInterviews: number;
-  averageScore: number;
-  totalDuration: number;
-  completedInterviews: number;
-}
-
-// Sample data for the chart
-const sampleWeeklyProgress = [
-  { date: 'Mon', score: 75 },
-  { date: 'Tue', score: 82 },
-  { date: 'Wed', score: 78 },
-  { date: 'Thu', score: 85 },
-  { date: 'Fri', score: 80 },
-  { date: 'Sat', score: 88 },
-  { date: 'Sun', score: 90 },
-];
 
 export default function Dashboard() {
-  const { user, signOut } = useAuth();
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [statsState, setStatsState] = useState<InterviewStats>({
-    totalInterviews: 0,
-    averageScore: 0,
-    totalDuration: 0,
-    completedInterviews: 0,
-  });
+  const { userData, isLoading, error } = useDashboard();
 
-  useEffect(() => {
-    // TODO: Fetch actual stats from the backend
-    setStatsState({
-      totalInterviews: 12,
-      averageScore: 85,
-      totalDuration: 180,
-      completedInterviews: 8,
-    });
-  }, []);
-
-  const statsItems = [
+  const statsItems = userData ? [
     {
-      name: 'Total Interviews',
-      value: statsState.totalInterviews,
+      name: 'Interviews Completed',
+      value: userData.interviewsCompleted,
       icon: ChartBarIcon,
       color: 'bg-blue-500',
     },
     {
       name: 'Average Score',
-      value: `${statsState.averageScore}%`,
+      value: `${userData.averageScore}%`,
       icon: StarIcon,
       color: 'bg-yellow-500',
     },
     {
-      name: 'Total Duration',
-      value: `${statsState.totalDuration} min`,
+      name: 'Key Improvement',
+      value: userData.keyImprovementArea,
       icon: ClockIcon,
       color: 'bg-green-500',
     },
-    {
-      name: 'Completed',
-      value: statsState.completedInterviews,
-      icon: UserGroupIcon,
-      color: 'bg-purple-500',
-    },
-  ];
+  ] : [];
 
-  const handleSignOut = async () => {
-    try {
-      await signOut();
-      navigate('/login', { replace: true });
-    } catch (error) {
-      toast.error('Failed to sign out');
-    }
-  };
 
   const handleStartInterview = () => {
     navigate('/interview');
@@ -107,7 +55,7 @@ export default function Dashboard() {
     navigate('/recordings');
   };
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 to-white">
         <div className="flex flex-col items-center space-y-4">
@@ -141,9 +89,9 @@ export default function Dashboard() {
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800">
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-gray-100">
         <div className="animate-fade-in">
-          <h1 className="text-3xl font-bold text-gray-100 mb-8">Welcome back, {user?.email?.split('@')[0]}</h1>
+          <h1 className="text-3xl font-bold text-gray-100 mb-8">Welcome back, {userData?.name}!</h1>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             {statsItems.map((item) => (
               <motion.div
                 key={item.name}
@@ -201,10 +149,10 @@ export default function Dashboard() {
             </div>
 
             <div className="bg-gray-900/60 border border-gray-700 p-6 rounded-2xl shadow-xl transform transition-all duration-300 hover:scale-[1.02]">
-              <h2 className="text-xl font-bold text-gray-100 mb-4">Weekly Progress</h2>
+              <h2 className="text-xl font-bold text-gray-100 mb-4">Performance History</h2>
               <div className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={sampleWeeklyProgress}>
+                  <AreaChart data={userData?.performanceHistory || []}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                     <XAxis dataKey="date" stroke="#9CA3AF" />
                     <YAxis stroke="#9CA3AF" />
@@ -221,6 +169,46 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+
+          {/* Interview History Section */}
+          {userData && userData.interviewHistory.length > 0 && (
+            <div className="bg-gray-900/60 border border-gray-700 p-6 rounded-2xl shadow-xl">
+              <h2 className="text-2xl font-semibold text-gray-100 mb-4">Recent Interviews</h2>
+              <div className="space-y-3">
+                {userData.interviewHistory.map((session) => (
+                  <div
+                    key={session.interview_session_id}
+                    className="flex justify-between items-center p-4 bg-gray-800/50 rounded-lg border border-gray-700 hover:border-indigo-500 transition-colors"
+                  >
+                    <div className="flex-1">
+                      <p className="text-gray-300 text-sm">
+                        {new Date(session.date).toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric',
+                        })}
+                      </p>
+                      <p className="text-gray-400 text-xs mt-1">
+                        Duration: {Math.floor(session.duration / 60)} min {session.duration % 60} sec
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-right">
+                        <p className="text-lg font-semibold text-indigo-400">{session.score}%</p>
+                        <p className="text-xs text-gray-500 capitalize">{session.status}</p>
+                      </div>
+                      <button
+                        onClick={() => navigate(`/analysis/${session.interview_session_id}`)}
+                        className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 transition-colors"
+                      >
+                        View Analysis
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </main>
     </div>
