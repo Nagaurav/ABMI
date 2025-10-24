@@ -12,7 +12,8 @@
     "test": "vitest",
     "typecheck": "tsc --noEmit",
     "download-models": "node scripts/download-models.js",
-    "api": "node server/index.js"
+    "server": "tsx watch src/server/index.ts",
+    "dev:all": "concurrently \"npm run dev\" \"npm run server\""
   },
   "dependencies": {
     "@headlessui/react": "^2.2.4",

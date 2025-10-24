@@ -1,55 +1,135 @@
-import { useState } from 'react';
-import { useParams } from 'react-router-dom';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  RadarChart,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis,
-  Radar,
-} from 'recharts';
-import { Download, Share2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
+import { Loader2, CheckCircle, AlertCircle, Clock, TrendingUp, AlertTriangle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
+import { useToast } from '@/components/ui/use-toast';
+import { supabase } from '@/lib/supabase';
 
-const mockTimelineData = [
-  { time: '0:00', posture: 85, emotion: 90, tone: 88 },
-  { time: '1:00', posture: 82, emotion: 85, tone: 90 },
-  { time: '2:00', posture: 88, emotion: 92, tone: 85 },
-  { time: '3:00', posture: 90, emotion: 88, tone: 92 },
-  { time: '4:00', posture: 85, emotion: 90, tone: 88 },
-];
-
-const mockRadarData = [
-  { subject: 'Posture', A: 85 },
-  { subject: 'Eye Contact', A: 90 },
-  { subject: 'Voice Clarity', A: 88 },
-  { subject: 'Confidence', A: 92 },
-  { subject: 'Body Language', A: 87 },
-];
-
-const mockSuggestions = [
-  'Maintain consistent eye contact throughout the interview',
-  'Work on speaking at a steady pace - you tend to speed up when nervous',
-  'Consider using more hand gestures to emphasize key points',
-  'Practice maintaining an upright posture for longer periods',
-];
+interface AnalysisResult {
+  analysis: string;
+  strengths: string[];
+  areas_for_improvement: string[];
+  overall_score: number;
+  created_at: string;
+}
 
 export default function AnalysisReport() {
-  const { id } = useParams();
-  const [isExporting, setIsExporting] = useState(false);
+  const router = useRouter();
+  const { sessionId } = router.query;
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [pollingCount, setPollingCount] = useState(0);
+  const { toast } = useToast();
 
-  const handleExport = () => {
-    setIsExporting(true);
-    // Simulate export delay
-    setTimeout(() => {
-      setIsExporting(false);
-    }, 2000);
+  const fetchAnalysis = async () => {
+    if (!sessionId) return false;
+
+    try {
+      const { data, error } = await supabase
+        .from('interview_analyses')
+        .select('*')
+        .eq('session_id', sessionId)
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        setAnalysis(data);
+        setIsLoading(false);
+        return true; // Analysis found
+      }
+      return false; // Analysis not found yet
+    } catch (err) {
+      console.error('Error fetching analysis:', err);
+      setError('Failed to load analysis. Please try again.');
+      setIsLoading(false);
+      return false;
+    }
   };
+
+  // Start polling for analysis results
+  useEffect(() => {
+    if (!sessionId) return;
+
+    let intervalId: NodeJS.Timeout;
+    
+    const startPolling = async () => {
+      // Initial check
+      const found = await fetchAnalysis();
+      if (found) return;
+
+      // If not found, start polling
+      intervalId = setInterval(async () => {
+        const found = await fetchAnalysis();
+        setPollingCount(prev => {
+          const newCount = prev + 1;
+          // Stop polling after 2 minutes (24 * 5s = 120s)
+          if (newCount >= 24) {
+            clearInterval(intervalId);
+            setError('Analysis is taking longer than expected. Please refresh the page to check again.');
+            setIsLoading(false);
+          }
+          return newCount;
+        });
+      }, 5000); // Poll every 5 seconds
+    };
+
+    startPolling();
+    return () => clearInterval(intervalId);
+  }, [sessionId]);
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-4">
+        <div className="text-center space-y-4 max-w-2xl">
+          <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
+          <h1 className="text-2xl font-bold">Generating Your Analysis</h1>
+          <p className="text-muted-foreground">
+            We're analyzing your interview. This may take a few moments...
+          </p>
+          <Progress value={(pollingCount / 24) * 100} className="w-full max-w-md mx-auto" />
+          <p className="text-sm text-muted-foreground">
+            {pollingCount * 5} seconds elapsed
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-4">
+        <div className="text-center space-y-4 max-w-2xl">
+          <AlertCircle className="h-12 w-12 text-destructive mx-auto" />
+          <h1 className="text-2xl font-bold">Analysis Error</h1>
+          <p className="text-muted-foreground">{error}</p>
+          <Button onClick={() => window.location.reload()} className="mt-4">
+            Refresh Page
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!analysis) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-4">
+        <div className="text-center space-y-4 max-w-2xl">
+          <Clock className="h-12 w-12 text-muted-foreground mx-auto" />
+          <h1 className="text-2xl font-bold">Analysis Not Found</h1>
+          <p className="text-muted-foreground">
+            We couldn't find the analysis for this session. Please check the URL or try again later.
+          </p>
+          <Button onClick={() => router.push('/dashboard')} className="mt-4">
+            Back to Dashboard
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

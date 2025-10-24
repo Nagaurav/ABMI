@@ -14,7 +14,7 @@ const DEFAULT_SETTINGS: Omit<UserSettings, 'id' | 'created_at' | 'updated_at'> =
 };
 
 const Settings = () => {
-  const { toast } = useToast();
+  const { showToast } = useToast();
   const user = useUser();
   
   const [isLoading, setIsLoading] = useState(true);
@@ -48,11 +48,7 @@ const Settings = () => {
     } catch (error) {
       console.error('Error fetching settings:', error);
       setError('Failed to load settings');
-      toast({
-        title: 'Error',
-        description: 'Failed to load settings',
-        variant: 'destructive',
-      });
+      showToast('Failed to load settings', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -61,11 +57,7 @@ const Settings = () => {
   // Save settings
   const saveSettings = async () => {
     if (!user?.id) {
-      toast({
-        title: 'Error',
-        description: 'You must be logged in to save settings',
-        variant: 'destructive',
-      });
+      showToast('You must be logged in to save settings', 'error');
       return;
     }
 
@@ -86,18 +78,11 @@ const Settings = () => {
       // Reset form data
       setFormData({});
       
-      toast({
-        title: 'Success',
-        description: 'Settings saved successfully',
-      });
+      showToast('Settings saved successfully', 'success');
       
     } catch (error) {
       console.error('Error saving settings:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to save settings',
-        variant: 'destructive',
-      });
+      showToast('Failed to save settings', 'error');
     } finally {
       setIsSaving(false);
     }

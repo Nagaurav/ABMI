@@ -5,29 +5,40 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { authUtils } from '@/lib/auth-utils';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Loader2 } from 'lucide-react';
+import { z } from 'zod';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+
+// Form validation schema
+const loginSchema = z.object({
+  email: z.string().email('Please enter a valid email address'),
+  password: z.string().min(8, 'Password must be at least 8 characters long'),
+});
+
+type LoginFormValues = z.infer<typeof loginSchema>;
 
 export function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const from = location.state?.from?.pathname || '/';
+  
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<LoginFormValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
+      email: '',
+      password: '',
+    },
+  });
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!email || !password) {
-      toast.error('Please fill in all fields');
-      return;
-    }
-
-    setIsLoading(true);
-    
+  const onSubmit = async (data: LoginFormValues) => {
     try {
-      const { success, error } = await authUtils.signIn(email, password);
+      const { success, error } = await authUtils.signIn(data.email, data.password);
       
       if (success) {
         toast.success('Logged in successfully');
@@ -38,64 +49,51 @@ export function LoginPage() {
     } catch (error: any) {
       const errorMessage = authUtils.handleAuthError(error);
       toast.error(errorMessage);
-    } finally {
-      setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex min-h-screen flex-col justify-center px-6 py-12 lg:px-8 bg-background">
+    <div className="flex min-h-screen flex-col justify-center px-4 sm:px-6 lg:px-8 bg-background">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        {/* Logo Placeholder - Replace with your logo */}
-        <div className="flex justify-center">
-          <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+        <div className="text-center">
+          <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
             <span className="text-2xl font-bold text-primary">ABMI</span>
           </div>
+          <h1 className="text-3xl font-bold text-foreground mb-2">Welcome back</h1>
+          <p className="text-muted-foreground">Sign in to your account to continue</p>
         </div>
-        <h2 className="mt-2 text-center text-3xl font-bold text-foreground">
-          Sign in to your account
-        </h2>
-        <p className="mt-2 text-center text-sm text-muted-foreground">
-          Don't have an account?{' '}
-          <Link
-            to="/register"
-            className="font-semibold text-primary hover:text-primary/90 transition-colors"
-          >
-            Create a new account
-          </Link>
-        </p>
       </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-card py-8 px-4 shadow sm:rounded-lg sm:px-10">
-          <form className="space-y-6" onSubmit={handleSubmit}>
+      <div className="mt-10 sm:mx-auto sm:w-full sm:max-w-md">
+        <div className="bg-card px-6 py-8 shadow-lg rounded-lg sm:px-10">
+          <form className="space-y-6" onSubmit={handleSubmit(onSubmit)}>
             <div>
-              <Label htmlFor="email" className="block text-sm font-medium text-foreground/90 mb-1">
+              <Label htmlFor="email" className="block text-sm font-medium text-foreground mb-1">
                 Email address
               </Label>
               <div className="mt-1">
                 <Input
                   id="email"
-                  name="email"
                   type="email"
                   autoComplete="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="block w-full px-3 py-2 border border-border/70 bg-background rounded-md shadow-sm placeholder-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary text-foreground sm:text-sm transition-colors"
+                  className="block w-full"
+                  {...register('email')}
                 />
+                {errors.email && (
+                  <p className="mt-1 text-sm text-destructive">{errors.email.message}</p>
+                )}
               </div>
             </div>
 
             <div>
               <div className="flex items-center justify-between">
-                <Label htmlFor="password" className="block text-sm font-medium text-foreground/90 mb-1">
+                <Label htmlFor="password" className="block text-sm font-medium text-foreground mb-1">
                   Password
                 </Label>
                 <div className="text-sm">
-                  <Link
-                    to="/forgot-password"
-                    className="font-medium text-primary hover:text-primary/90 transition-colors"
+                  <Link 
+                    to="/auth/forgot-password" 
+                    className="font-medium text-primary hover:text-primary/80"
                   >
                     Forgot password?
                   </Link>
@@ -104,18 +102,16 @@ export function LoginPage() {
               <div className="mt-1 relative">
                 <Input
                   id="password"
-                  name="password"
                   type={showPassword ? 'text' : 'password'}
                   autoComplete="current-password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="block w-full px-3 py-2 pr-10 border border-border/70 bg-background rounded-md shadow-sm placeholder-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary text-foreground sm:text-sm transition-colors"
+                  className="block w-full pr-10"
+                  {...register('password')}
                 />
                 <button
                   type="button"
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-muted-foreground/70 hover:text-foreground transition-colors"
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-muted-foreground hover:text-foreground"
                   onClick={() => setShowPassword(!showPassword)}
+                  tabIndex={-1}
                 >
                   {showPassword ? (
                     <EyeOff className="h-5 w-5" aria-hidden="true" />
@@ -123,28 +119,38 @@ export function LoginPage() {
                     <Eye className="h-5 w-5" aria-hidden="true" />
                   )}
                 </button>
+                {errors.password && (
+                  <p className="mt-1 text-sm text-destructive">{errors.password.message}</p>
+                )}
               </div>
             </div>
 
             <div>
               <Button
                 type="submit"
-                className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-md shadow-sm text-sm font-semibold text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary/80 transition-colors"
-                disabled={isLoading}
+                className="w-full flex justify-center py-2 px-4 rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+                disabled={isSubmitting}
               >
-                {isLoading ? 'Signing in...' : 'Sign in'}
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Signing in...
+                  </>
+                ) : (
+                  'Sign in'
+                )}
               </Button>
             </div>
           </form>
 
-          <div className="mt-8">
+          <div className="mt-6">
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-border/50" />
+                <div className="w-full border-t border-gray-300 dark:border-gray-700" />
               </div>
               <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-card text-muted-foreground text-xs font-medium">
-                  OR CONTINUE WITH
+                <span className="px-2 bg-card text-muted-foreground">
+                  Don't have an account?
                 </span>
               </div>
             </div>

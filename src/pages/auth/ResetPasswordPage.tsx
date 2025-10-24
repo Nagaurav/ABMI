@@ -1,34 +1,53 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { toast } from 'sonner';
 import { authUtils } from '@/lib/auth-utils';
+import { z } from 'zod';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { Eye, EyeOff, Loader2, Lock } from 'lucide-react';
 
-/**
- * Displays a toast notification
- * @param message - The message to display
- * @param type - The type of toast ('success' or 'error')
- */
-const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-  // In a production app, you would use a proper toast library like react-toastify or sonner
-  console.log(`${type.toUpperCase()}: ${message}`);
-  
-  // For a simple UI feedback, we'll use the browser's alert for now
-  // In a real app, you would replace this with a proper toast component
-  if (type === 'error') {
-    alert(`Error: ${message}`);
-  } else {
-    alert(`Success: ${message}`);
-  }
-};
+// Form validation schema
+const resetPasswordSchema = z.object({
+  password: z
+    .string()
+    .min(8, 'Password must be at least 8 characters')
+    .regex(
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).*$/,
+      'Password must contain at least one uppercase letter, one lowercase letter, and one number'
+    ),
+  confirmPassword: z.string(),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: "Passwords don't match",
+  path: ["confirmPassword"],
+});
+
+type ResetPasswordFormValues = z.infer<typeof resetPasswordSchema>;
 
 export function ResetPasswordPage() {
   const [searchParams] = useSearchParams();
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isValidToken, setIsValidToken] = useState<boolean | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
   const token = searchParams.get('token');
+  
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<ResetPasswordFormValues>({
+    resolver: zodResolver(resetPasswordSchema),
+    defaultValues: {
+      password: '',
+      confirmPassword: '',
+    },
+  });
 
   useEffect(() => {
     const verifyToken = async () => {
@@ -52,75 +71,40 @@ export function ResetPasswordPage() {
     verifyToken();
   }, [token]);
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    
-    if (!password || !confirmPassword) {
-      setError('Please fill in all fields');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError('Passwords do not match');
-      return;
-    }
-
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters long');
-      return;
-    }
-
+  const onSubmit = async (data: ResetPasswordFormValues) => {
     if (!token) {
       setError('Invalid or expired reset token');
       return;
     }
-
-    setIsLoading(true);
+    
+    setIsSubmitting(true);
     setError('');
     
     try {
-      const { success, error: resetError } = await authUtils.updatePassword(password);
+      const { success, error } = await authUtils.updatePassword(data.password);
       
       if (success) {
-        showToast('Your password has been reset successfully.', 'success');
-        
-        // Redirect to login after a short delay
-        setTimeout(() => {
-          navigate('/login');
-        }, 2000);
+        toast.success('Your password has been reset successfully. You can now log in with your new password.');
+        navigate('/auth/login');
       } else {
-        throw new Error(resetError || 'Failed to reset password');
+        throw new Error(error || 'Failed to reset password');
       }
     } catch (error: any) {
+      console.error('Error resetting password:', error);
       const errorMessage = authUtils.handleAuthError(error);
       setError(errorMessage);
-      showToast(errorMessage, 'error');
+      toast.error(errorMessage);
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
   if (isValidToken === null) {
     return (
-      <div style={{ 
-        display: 'flex', 
-        flexDirection: 'column', 
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        minHeight: '100vh', 
-        padding: '3rem 1.5rem'
-      }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{
-            width: '3rem',
-            height: '3rem',
-            border: '2px solid #3b82f6',
-            borderTopColor: 'transparent',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
-            margin: '0 auto'
-          }}></div>
-          <p style={{ marginTop: '1rem', color: '#6b7280' }}>Verifying reset token...</p>
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-foreground">Verifying reset token...</p>
         </div>
       </div>
     );
@@ -128,31 +112,11 @@ export function ResetPasswordPage() {
 
   if (!isValidToken) {
     return (
-      <div style={{ 
-        display: 'flex', 
-        flexDirection: 'column', 
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        minHeight: '100vh', 
-        padding: '3rem 1.5rem'
-      }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{
-            width: '3rem',
-            height: '3rem',
-            backgroundColor: '#fee2e2',
-            borderRadius: '50%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            margin: '0 auto'
-          }}>
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <div className="text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100">
             <svg
-              style={{
-                width: '1.5rem',
-                height: '1.5rem',
-                color: '#dc2626'
-              }}
+              className="h-6 w-6 text-red-600"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -165,43 +129,17 @@ export function ResetPasswordPage() {
               />
             </svg>
           </div>
-          <h3 style={{ 
-            marginTop: '1rem', 
-            fontSize: '1.125rem', 
-            fontWeight: 500,
-            color: '#111827'
-          }}>
-            Invalid or Expired Link
-          </h3>
-          <p style={{ 
-            marginTop: '0.5rem', 
-            color: '#6b7280'
-          }}>
-            The password reset link is invalid or has expired. Please request a new one.
+          <h2 className="mt-3 text-2xl font-bold text-foreground">Invalid or Expired Link</h2>
+          <p className="mt-2 text-muted-foreground">
+            The password reset link is invalid or has expired. Please request a new reset link.
           </p>
-          <div style={{ marginTop: '1.5rem' }}>
-            <button
-              onClick={() => navigate('/forgot-password')}
-              style={{
-                padding: '0.5rem 1rem',
-                borderRadius: '0.375rem',
-                border: '1px solid #e5e7eb',
-                backgroundColor: 'white',
-                color: '#111827',
-                cursor: 'pointer',
-                fontSize: '0.875rem',
-                fontWeight: 500,
-                transition: 'all 0.2s',
-              }}
-              onMouseOver={(e) => {
-                e.currentTarget.style.backgroundColor = '#f3f4f6';
-              }}
-              onMouseOut={(e) => {
-                e.currentTarget.style.backgroundColor = 'white';
-              }}
+          <div className="mt-6">
+            <Link
+              to="/auth/forgot-password"
+              className="text-sm font-medium text-primary hover:text-primary/80"
             >
-              Request New Reset Link
-            </button>
+              Request new reset link
+            </Link>
           </div>
         </div>
       </div>
@@ -209,195 +147,127 @@ export function ResetPasswordPage() {
   }
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'center',
-      minHeight: '100vh',
-      padding: '3rem 1.5rem'
-    }}>
-      <div style={{
-        margin: '0 auto',
-        width: '100%',
-        maxWidth: '28rem'
-      }}>
-        <h2 style={{
-          marginTop: '1.5rem',
-          textAlign: 'center',
-          fontSize: '1.875rem',
-          fontWeight: 800,
-          lineHeight: '2.25rem',
-          color: '#111827'
-        }}>
-          Reset your password
-        </h2>
-        <p style={{
-          marginTop: '0.5rem',
-          textAlign: 'center',
-          fontSize: '0.875rem',
-          color: '#6b7280'
-        }}>
-          Enter a new password for your account
-        </p>
+    <div className="flex min-h-screen flex-col justify-center px-4 sm:px-6 lg:px-8 bg-background">
+      <div className="sm:mx-auto sm:w-full sm:max-w-md">
+        <div className="text-center">
+          <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
+            <Lock className="h-8 w-8 text-primary" />
+          </div>
+          <h1 className="text-3xl font-bold text-foreground mb-2">Reset Password</h1>
+          <p className="text-muted-foreground">
+            Enter your new password below to reset your password
+          </p>
+        </div>
       </div>
 
-      <div style={{
-        marginTop: '2rem',
-        marginLeft: 'auto',
-        marginRight: 'auto',
-        width: '100%',
-        maxWidth: '28rem'
-      }}>
-        <div style={{
-          backgroundColor: 'white',
-          padding: '2rem 1rem',
-          borderRadius: '0.5rem',
-          boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
-        }}>
+      <div className="mt-10 sm:mx-auto sm:w-full sm:max-w-md">
+        <div className="bg-card px-6 py-8 shadow-lg rounded-lg sm:px-10">
           {error && (
-            <div style={{
-              marginBottom: '1rem',
-              padding: '0.75rem',
-              backgroundColor: '#fef2f2',
-              color: '#dc2626',
-              fontSize: '0.875rem',
-              borderRadius: '0.375rem'
-            }}>
+            <div className="mb-6 p-3 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-200 rounded-md text-sm">
               {error}
             </div>
           )}
           
-          <form onSubmit={handleSubmit} style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '1.5rem'
-          }}>
+          <form className="space-y-6" onSubmit={handleSubmit(onSubmit)}>
             <div>
-              <label htmlFor="password" style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: 500,
-                color: '#374151',
-                marginBottom: '0.5rem'
-              }}>
+              <Label htmlFor="password" className="block text-sm font-medium text-foreground mb-1">
                 New Password
-              </label>
-              <div style={{ marginTop: '0.25rem' }}>
-                <input
+              </Label>
+              <div className="mt-1 relative">
+                <Input
                   id="password"
-                  name="password"
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   autoComplete="new-password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    padding: '0.5rem 0.75rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '0.375rem',
-                    boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
-                    fontSize: '0.875rem',
-                    lineHeight: '1.25rem',
-                    color: '#111827',
-                    backgroundColor: 'white',
-                    transition: 'all 0.2s',
-                    outline: 'none'
-                  }}
-                  onFocus={(e) => {
-                    e.currentTarget.style.borderColor = '#3b82f6';
-                    e.currentTarget.style.boxShadow = '0 0 0 2px rgba(59, 130, 246, 0.25)';
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.style.borderColor = '#d1d5db';
-                    e.currentTarget.style.boxShadow = '0 1px 2px 0 rgba(0, 0, 0, 0.05)';
-                  }}
+                  className={`block w-full pr-10 ${errors.password ? 'border-destructive' : 'border-border'}`}
+                  {...register('password')}
                 />
+                <button
+                  type="button"
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowPassword(!showPassword)}
+                  tabIndex={-1}
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-5 w-5" aria-hidden="true" />
+                  ) : (
+                    <Eye className="h-5 w-5" aria-hidden="true" />
+                  )}
+                </button>
+                {errors.password && (
+                  <p className="mt-1 text-sm text-destructive">{errors.password.message}</p>
+                )}
               </div>
             </div>
 
             <div>
-              <label htmlFor="confirmPassword" style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: 500,
-                color: '#374151',
-                marginBottom: '0.5rem'
-              }}>
+              <Label htmlFor="confirmPassword" className="block text-sm font-medium text-foreground mb-1">
                 Confirm New Password
-              </label>
-              <div style={{ marginTop: '0.25rem' }}>
-                <input
+              </Label>
+              <div className="mt-1 relative">
+                <Input
                   id="confirmPassword"
-                  name="confirmPassword"
-                  type="password"
+                  type={showConfirmPassword ? 'text' : 'password'}
                   autoComplete="new-password"
-                  required
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    padding: '0.5rem 0.75rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '0.375rem',
-                    boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
-                    fontSize: '0.875rem',
-                    lineHeight: '1.25rem',
-                    color: '#111827',
-                    backgroundColor: 'white',
-                    transition: 'all 0.2s',
-                    outline: 'none'
-                  }}
-                  onFocus={(e) => {
-                    e.currentTarget.style.borderColor = '#3b82f6';
-                    e.currentTarget.style.boxShadow = '0 0 0 2px rgba(59, 130, 246, 0.25)';
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.style.borderColor = '#d1d5db';
-                    e.currentTarget.style.boxShadow = '0 1px 2px 0 rgba(0, 0, 0, 0.05)';
-                  }}
+                  className={`block w-full pr-10 ${errors.confirmPassword ? 'border-destructive' : 'border-border'}`}
+                  {...register('confirmPassword')}
                 />
+                <button
+                  type="button"
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  tabIndex={-1}
+                >
+                  {showConfirmPassword ? (
+                    <EyeOff className="h-5 w-5" aria-hidden="true" />
+                  ) : (
+                    <Eye className="h-5 w-5" aria-hidden="true" />
+                  )}
+                </button>
+                {errors.confirmPassword && (
+                  <p className="mt-1 text-sm text-destructive">{errors.confirmPassword.message}</p>
+                )}
               </div>
             </div>
 
             <div>
-              <button
+              <Button
                 type="submit"
-                disabled={isLoading}
-                style={{
-                  display: 'flex',
-                  width: '100%',
-                  justifyContent: 'center',
-                  padding: '0.5rem 1rem',
-                  border: '1px solid transparent',
-                  borderRadius: '0.375rem',
-                  boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
-                  fontSize: '0.875rem',
-                  fontWeight: 500,
-                  color: 'white',
-                  backgroundColor: '#3b82f6',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                  opacity: isLoading ? 0.7 : 1,
-                  pointerEvents: isLoading ? 'none' : 'auto'
-                }}
-                onMouseOver={(e) => {
-                  if (!isLoading) {
-                    e.currentTarget.style.backgroundColor = '#2563eb';
-                  }
-                }}
-                onMouseOut={(e) => {
-                  if (!isLoading) {
-                    e.currentTarget.style.backgroundColor = '#3b82f6';
-                  }
-                }}
+                className="w-full flex justify-center py-2 px-4 rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+                disabled={isSubmitting}
               >
-                {isLoading ? 'Resetting password...' : 'Reset Password'}
-              </button>
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Resetting password...
+                  </>
+                ) : (
+                  'Reset Password'
+                )}
+              </Button>
             </div>
           </form>
+
+          <div className="mt-6">
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-gray-300 dark:border-gray-700" />
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="px-2 bg-card text-muted-foreground">
+                  Remember your password?
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <Link
+                to="/auth/login"
+                className="w-full flex justify-center py-2 px-4 border border-gray-300 dark:border-gray-700 rounded-md shadow-sm text-sm font-medium text-foreground bg-transparent hover:bg-accent focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+              >
+                Back to sign in
+              </Link>
+            </div>
+          </div>
         </div>
       </div>
     </div>

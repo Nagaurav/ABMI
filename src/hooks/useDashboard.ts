@@ -1,16 +1,6 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
-
-// Define the shape of the profile from Supabase
-interface Profile {
-  id: string;
-  email: string;
-  full_name: string | null;
-  created_at: string;
-  updated_at: string;
-  bio?: string;  // Added bio field since it exists in your database
-}
+import { supabase } from '../lib/supabase';
 
 export interface PerformanceDataPoint {
   date: string;
@@ -18,21 +8,19 @@ export interface PerformanceDataPoint {
 }
 
 export interface InterviewHistoryItem {
-  interview_session_id: string;
+  session_id: string;
   date: string;
-  duration: number; // in seconds
   score: number;
-  status: string;
 }
 
 export interface DashboardData {
-  name: string;
+  full_name: string;
   email: string;
-  averageScore: number;
-  interviewsCompleted: number;
-  keyImprovementArea: string;
-  performanceHistory: PerformanceDataPoint[];
-  interviewHistory: InterviewHistoryItem[];
+  interviews_completed: number;
+  average_score: number;
+  latest_improvement_area: string;
+  performance_history: PerformanceDataPoint[];
+  interview_history: InterviewHistoryItem[];
 }
 
 interface UseDashboardReturn {
@@ -159,44 +147,28 @@ export function useDashboard(): UseDashboardReturn {
         date.setDate(date.getDate() - i);
         const dateStr = date.toISOString().split('T')[0];
         
-        const daySessions = completedSessions.filter(s => {
-          const sessionDate = s.created_at ? new Date(s.created_at).toISOString().split('T')[0] : '';
-          return sessionDate === dateStr;
-        });
-        
-        const dayScore = daySessions.length > 0
-          ? daySessions.reduce((sum, s) => sum + (typeof s.score === 'number' ? s.score : 0), 0) / daySessions.length
-          : 0;
-          
-        performanceHistory.push({
-          date: dateStr,
-          score: Math.round(dayScore * 10) / 10
-        });
       }
 
-      // Determine key improvement area (simplified example)
-      let keyImprovementArea = 'Communication Skills';
-      if (averageScore < 5) {
-        keyImprovementArea = 'Technical Knowledge';
-      } else if (averageScore < 7) {
-        keyImprovementArea = 'Problem Solving';
-      }
-
-      // Construct the dashboard data with proper null checks
-      const dashboardData: DashboardData = {
-        name: profileData.full_name || 'User',
-        email: profileData.email || user?.email || '',
-        averageScore,
-        interviewsCompleted: completedSessions.length,
-        keyImprovementArea,
-        performanceHistory,
-        interviewHistory,
+      const data = await response.json();
+      
+      // Transform the data to match our frontend types
+      const transformedData: DashboardData = {
+        ...data,
+        performance_history: data.performance_history?.map((item: any) => ({
+          date: new Date(item.date).toISOString().split('T')[0],
+          score: item.score,
+        })) || [],
+        interview_history: data.interview_history?.map((item: any) => ({
+          session_id: item.session_id,
+          date: new Date(item.date).toISOString().split('T')[0],
+          score: item.score,
+        })) || [],
       };
 
-      setUserData(dashboardData);
-    } catch (err: any) {
-      console.error('Dashboard fetch error:', err);
-      setError(err.message || 'Failed to load dashboard data');
+      setUserData(transformedData);
+    } catch (err) {
+      console.error('Error fetching dashboard data:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
     } finally {
       setIsLoading(false);
     }
