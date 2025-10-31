@@ -1,7 +1,7 @@
 import { useAuth } from '../contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { toast } from 'react-hot-toast';
+import { toast } from 'sonner';
 
 export function useProfile() {
   const { user } = useAuth();

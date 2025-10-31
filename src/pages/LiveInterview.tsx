@@ -22,39 +22,20 @@ declare global {
 interface InterviewQuestion {
   id: string;
   question: string;
-  category: string;
-  timeLimit: number;
-  difficulty: 'easy' | 'medium' | 'hard';
-}
-
-type InterviewStatus = 'idle' | 'starting' | 'active' | 'completed' | 'error';
-type FeedbackType = 'eye_contact' | 'posture' | 'volume' | 'pace' | 'filler_words';
-
-interface FeedbackItem {
-  type: FeedbackType;
-  message: string;
-  isPositive: boolean;
-  timestamp: Date;
-}
-
-type InterviewStatus = 'idle' | 'starting' | 'active' | 'completed' | 'error';
-
-type FeedbackType = 'eye_contact' | 'posture' | 'volume' | 'pace' | 'filler_words';
-
-interface FeedbackItem {
-  type: FeedbackType;
-  message: string;
-  isPositive: boolean;
-  timestamp: Date;
-}
-
-interface InterviewQuestion {
-  id: string;
-  question: string;
   text?: string; // Keeping for backward compatibility
   category: string;
   timeLimit: number; // in seconds
   difficulty: 'easy' | 'medium' | 'hard';
+}
+
+type InterviewStatus = 'idle' | 'starting' | 'active' | 'completed' | 'error';
+type FeedbackType = 'eye_contact' | 'posture' | 'volume' | 'pace' | 'filler_words';
+
+interface FeedbackItem {
+  type: FeedbackType;
+  message: string;
+  isPositive: boolean;
+  timestamp: Date;
 }
 
 const LiveInterview: React.FC = () => {
@@ -88,85 +69,97 @@ const LiveInterview: React.FC = () => {
   
   // MediaPipe hooks
   const mediaPipe = useMediaPipe();
-  const { isModelLoading, faceLandmarks, poseLandmarks, startDetection, stopDetection } = mediaPipe || {};
+  const { 
+    isModelLoading, 
+    faceLandmarks, 
+    poseLandmarks, 
+    startDetection, 
+    stopDetection,
+    analysisResults
+  } = mediaPipe || {};
   
   // Audio analysis
   const audioAnalysis = useAudioAnalysis();
-  const { startAnalysis, stopAnalysis, volume = 0.5, speakingRate = 3 } = audioAnalysis || {};
-    poseLandmarks,
-    analysisResults
-  } = useMediaPipe({
-    enableFaceMesh: true,
-    enablePose: true,
-    enableHands: false
-  });
-
-  const {
-    isAnalyzing: isAudioAnalyzing,
-    startAnalysis,
-    stopAnalysis,
-    volume,
-    speakingRate,
-    fillerWords
-  } = useAudioAnalysis();
+  const { 
+    startAnalysis, 
+    stopAnalysis, 
+    volume = 0.5, 
+    speakingRate = 3,
+    fillerWords = []
+  } = audioAnalysis || {};
 
   // WebSocket connection
   const connectWebSocket = useCallback(() => {
     if (wsRef.current) return;
 
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/ws/interview-stream`;
-    
-    const ws = new WebSocket(wsUrl);
-    
-    ws.onopen = () => {
-      console.log('WebSocket connection established');
-      if (sessionId) {
-        ws.send(JSON.stringify({
-          type: 'session_init',
-          session_id: sessionId,
-          user_id: user?.id
-        }));
-      }
-    };
-    
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('WebSocket message received:', data);
-        
-        if (data.type === 'question') {
-          setCurrentQuestion(data.question);
-        } else if (data.type === 'feedback') {
-          addFeedback({
-            type: data.feedback_type,
-            message: data.message,
-            isPositive: data.is_positive,
-            timestamp: new Date()
-          });
+    try {
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProtocol}//${window.location.host}/ws/interview-stream`;
+      
+      const ws = new WebSocket(wsUrl);
+      
+      ws.onopen = () => {
+        console.log('WebSocket connection established');
+        if (sessionId) {
+          ws.send(JSON.stringify({
+            type: 'session_init',
+            session_id: sessionId,
+            user_id: user?.id
+          }));
         }
-      } catch (err) {
-        console.error('Error processing WebSocket message:', err);
-      }
-    };
-    
-    ws.onclose = () => {
-      console.log('WebSocket connection closed');
-      if (status === 'active') {
-        // Try to reconnect if we're still in an active interview
-        setTimeout(connectWebSocket, 3000);
-      }
-    };
-    
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
-    
-    wsRef.current = ws;
-    return () => {
-      ws.close();
-      wsRef.current = null;
-    };
+      };
+      
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('WebSocket message received:', data);
+          
+          if (data.type === 'question') {
+            setCurrentQuestion(data.question);
+          } else if (data.type === 'feedback') {
+            // addFeedback will be defined later, use setFeedback directly for now
+            setFeedback(prev => {
+              const isDuplicate = prev.some(f => 
+                f.type === data.feedback_type && 
+                f.message === data.message &&
+                (new Date().getTime() - f.timestamp.getTime()) < 10000
+              );
+              if (isDuplicate) return prev;
+              return [...prev.slice(-9), { 
+                type: data.feedback_type,
+                message: data.message,
+                isPositive: data.is_positive,
+                timestamp: new Date(),
+                id: Date.now().toString()
+              }];
+            });
+          }
+        } catch (err) {
+          console.error('Error processing WebSocket message:', err);
+        }
+      };
+      
+      ws.onclose = () => {
+        console.log('WebSocket connection closed');
+        wsRef.current = null;
+        // Only try to reconnect if we're still in an active interview and WebSocket server exists
+        if (status === 'active') {
+          // Don't auto-reconnect if server doesn't support WebSocket
+          // The app can work without WebSocket
+        }
+      };
+      
+      ws.onerror = (error) => {
+        console.warn('WebSocket connection failed (this is okay if server doesn\'t support WebSocket):', error);
+        // Don't set error state - app can work without WebSocket
+        wsRef.current = null;
+      };
+      
+      wsRef.current = ws;
+    } catch (err) {
+      console.warn('WebSocket not available:', err);
+      // Don't set error state - app can work without WebSocket
+    }
   }, [sessionId, status, user?.id]);
 
   // Initialize media devices and WebSocket
@@ -186,17 +179,23 @@ const LiveInterview: React.FC = () => {
         
         mediaStreamRef.current = stream;
         
-        // Initialize WebSocket connection
-        connectWebSocket();
+        // Try to initialize WebSocket connection (optional)
+        try {
+          connectWebSocket();
+        } catch (wsErr) {
+          console.warn('WebSocket initialization failed, continuing without it:', wsErr);
+        }
         
         // Load interview questions
         await loadQuestions();
         
         setStatus('active');
+        setIsLoading(false);
       } catch (err) {
         console.error('Error initializing interview:', err);
         setError('Failed to access camera/microphone. Please check your permissions.');
         setStatus('error');
+        setIsLoading(false);
       }
     };
     
@@ -332,6 +331,31 @@ const LiveInterview: React.FC = () => {
     };
   }, [status]);
 
+  // Clean up function for the component (must be before any conditional returns)
+  useEffect(() => {
+    return () => {
+      // Clean up media streams and WebSocket on unmount
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+      
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+      
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+      
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+      
+      stopDetection?.();
+      stopAnalysis?.();
+    };
+  }, [stopDetection, stopAnalysis]);
+
   // Load interview questions
   const loadQuestions = async () => {
     try {
@@ -340,18 +364,75 @@ const LiveInterview: React.FC = () => {
         .select('*')
         .order('difficulty', { ascending: true });
       
-      if (error) throw error;
+      if (error) {
+        // If table doesn't exist, use default questions
+        if (error.code === '42P01' || error.message?.includes('does not exist')) {
+          console.warn('interview_questions table not found, using default questions');
+          const defaultQuestions: InterviewQuestion[] = [
+            {
+              id: '1',
+              question: 'Tell me about yourself.',
+              category: 'General',
+              timeLimit: 120,
+              difficulty: 'easy'
+            },
+            {
+              id: '2',
+              question: 'What are your greatest strengths?',
+              category: 'Behavioral',
+              timeLimit: 90,
+              difficulty: 'easy'
+            },
+            {
+              id: '3',
+              question: 'Describe a challenging project you worked on.',
+              category: 'Technical',
+              timeLimit: 180,
+              difficulty: 'medium'
+            }
+          ];
+          setQuestions(defaultQuestions);
+          if (defaultQuestions.length > 0) {
+            setCurrentQuestion(defaultQuestions[0]);
+          }
+          return;
+        }
+        throw error;
+      }
       
       setQuestions(data || []);
       
       // Set first question
       if (data?.length > 0) {
         setCurrentQuestion(data[0]);
+      } else {
+        // If no questions in database, use defaults
+        const defaultQuestions: InterviewQuestion[] = [
+          {
+            id: '1',
+            question: 'Tell me about yourself.',
+            category: 'General',
+            timeLimit: 120,
+            difficulty: 'easy'
+          }
+        ];
+        setQuestions(defaultQuestions);
+        setCurrentQuestion(defaultQuestions[0]);
       }
     } catch (err) {
       console.error('Error loading questions:', err);
-      setError('Failed to load interview questions');
-      setStatus('error');
+      // Don't set status to error, just log it and continue with defaults
+      const defaultQuestions: InterviewQuestion[] = [
+        {
+          id: '1',
+          question: 'Tell me about yourself.',
+          category: 'General',
+          timeLimit: 120,
+          difficulty: 'easy'
+        }
+      ];
+      setQuestions(defaultQuestions);
+      setCurrentQuestion(defaultQuestions[0]);
     }
   };
 
@@ -619,317 +700,8 @@ const LiveInterview: React.FC = () => {
       </div>
     );
   }
-// Clean up function for the component
-  useEffect(() => {
-    return () => {
-      // Clean up media streams and WebSocket on unmount
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach(track => track.stop());
-      }
-      
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-      
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-      
-      if (mediaRecorderRef.current?.state === 'recording') {
-        mediaRecorderRef.current.stop();
-      }
-      
-      stopDetection();
-      stopAnalysis();
-    };
-  }, [stopDetection, stopAnalysis]);
-    stopAudioAnalysis,
-    getAudioAnalysis
-  } = useAudioAnalysis();
 
-  // Initialize interview session
-  const initializeInterview = useCallback(async () => {
-    if (!user) {
-      setInitializationError('User not authenticated. Please log in.');
-      setIsLoading(false);
-      setIsInitializing(false);
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      
-      // Create a new interview session
-      const { data: session, error: sessionError } = await supabase
-        .from('interview_sessions')
-        .insert([{
-          user_id: user.id,
-          status: 'preparing',
-          started_at: new Date().toISOString(),
-        }])
-        .select()
-        .single();
-
-      if (sessionError) throw sessionError;
-      setInterviewSession(session);
-
-      // Fetch interview questions
-      const { data: questionsData, error: questionsError } = await supabase
-        .from('interview_questions')
-        .select('*')
-        .order('difficulty', { ascending: true })
-        .limit(5);
-
-      if (questionsError) throw questionsError;
-      setQuestions(questionsData || []);
-      
-      if (questionsData && questionsData.length > 0) {
-        setCurrentQuestion(questionsData[0]);
-      }
-      
-      // Initialize media devices
-      try {
-        await startMediaDevices();
-        await startDetection();
-        await startAudioAnalysis();
-        
-        setIsLoading(false);
-        setIsInitializing(false);
-      } catch (mediaError) {
-        console.error('Error initializing media devices:', mediaError);
-        setInitializationError('Failed to access camera or microphone. Please check your permissions.');
-        setIsLoading(false);
-        setIsInitializing(false);
-      }
-    } catch (error) {
-      console.error('Error initializing interview:', error);
-      setInitializationError('Failed to initialize interview session. Please try again.');
-      setIsLoading(false);
-      setIsInitializing(false);
-      
-      toast({
-        title: 'Error',
-        description: 'Failed to initialize interview session.',
-        variant: 'destructive',
-      });
-    }
-  }, [user, toast]);
-
-  // Start interview
-  const startInterview = async () => {
-    if (!interviewSession) return;
-    
-    try {
-      // Start media devices
-      await startMediaDevices();
-      
-      // Update session status to 'in_progress'
-      const { error } = await supabase
-        .from('interview_sessions')
-        .update({ status: 'in_progress', started_at: new Date().toISOString() })
-        .eq('id', interviewSession.id);
-
-      if (error) throw error;
-      
-      setInterviewSession(prev => prev ? { ...prev, status: 'in_progress' } : null);
-      setIsInterviewActive(true);
-      
-      // Start timers and analysis
-      startTimers();
-      startAnalysis();
-      
-      toast({
-        title: 'Interview Started',
-        description: 'Your interview has begun. Good luck!',
-      });
-    } catch (error) {
-      console.error('Error starting interview:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to start interview. Please check your camera and microphone permissions.',
-        variant: 'destructive',
-      });
-    }
-  };
-
-  // Start media devices (camera and microphone)
-  const startMediaDevices = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
-
-      if (webcamRef.current) {
-        webcamRef.current.srcObject = stream;
-        await webcamRef.current.play().catch(console.error);
-      }
-
-      // Set up media recorder for audio
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9,opus' });
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-      
-      mediaRecorder.start(1000); // Collect data every second
-      mediaRecorderRef.current = mediaRecorder;
-      
-      return stream;
-    } catch (error) {
-      console.error('Error accessing media devices:', error);
-      throw error;
-    }
-  };
-
-  // Start timers
-  const startTimers = () => {
-    // Update time elapsed every second
-    timerRef.current = setInterval(() => {
-      setTimeElapsed(prev => prev + 1);
-    }, 1000);
-  };
-
-  // Start analysis (face, pose, audio)
-  const startAnalysis = async () => {
-    if (!webcamRef.current) return;
-    
-    // Start face and pose detection
-    await startDetection();
-    
-    // Start audio analysis
-    startAudioAnalysis();
-  };
-
-  // Handle next question
-  const handleNextQuestion = () => {
-    if (!currentQuestion || !questions.length) return;
-    
-    const currentIndex = questions.findIndex(q => q.id === currentQuestion.id);
-    const nextIndex = (currentIndex + 1) % questions.length;
-    setCurrentQuestion(questions[nextIndex]);
-  };
-
-  // Handle end interview
-  const handleEndInterview = async () => {
-    if (!interviewSession) return;
-    
-    try {
-      // Stop all analysis and timers
-      stopDetection();
-      stopAudioAnalysis();
-      
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      
-      // Stop media devices
-      if (mediaRecorderRef.current) {
-        mediaRecorderRef.current.stop();
-        mediaRecorderRef.current = null;
-      }
-      
-      if (webcamRef.current?.srcObject) {
-        const stream = webcamRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
-        webcamRef.current.srcObject = null;
-      }
-      
-      // Close WebSocket connection if exists
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
-      
-      // First update status to 'pending_analysis' to trigger the analysis
-      const { error: updateError } = await supabase
-        .from('interview_sessions')
-        .update({ 
-          status: 'pending_analysis',
-          ended_at: new Date().toISOString(),
-          duration_seconds: timeElapsed,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', interviewSession.id);
-
-      if (updateError) throw updateError;
-      
-      // Call the analysis endpoint to start processing
-      const response = await fetch('/api/analysis/start', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ sessionId: interviewSession.id }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to start analysis');
-      }
-      
-      // Show completion message
-      toast({
-        title: 'Interview Completed',
-        description: 'Your interview is being analyzed. You can view the results shortly.',
-      });
-      
-      // Navigate to the analysis page
-      navigate(`/analysis/${interviewSession.id}`);
-      
-    } catch (error) {
-      console.error('Error ending interview:', error);
-      
-      // Try to update status to 'analysis_failed' if something went wrong
-      try {
-        await supabase
-          .from('interview_sessions')
-          .update({ 
-            status: 'analysis_failed',
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', interviewSession.id);
-      } catch (e) {
-        console.error('Failed to update session status to failed:', e);
-      }
-      
-      toast({
-        title: 'Error',
-        description: 'Failed to process interview. Please try again.',
-        variant: 'destructive',
-      });
-    }
-  };
-
-  // Initialize on mount
-  useEffect(() => {
-    const init = async () => {
-      try {
-        await initializeInterview();
-      } catch (error) {
-        console.error('Initialization error:', error);
-        setInitializationError('An unexpected error occurred during initialization.');
-        setIsLoading(false);
-        setIsInitializing(false);
-      }
-    };
-    
-    init();
-    
-    // Cleanup on unmount
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-      
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-      
-      if (mediaRecorderRef.current) {
-        mediaRecorderRef.current.stop();
-      }
+  // Main render
   return (
     <div className="min-h-screen bg-gray-100">
       <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">

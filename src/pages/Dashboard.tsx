@@ -52,14 +52,14 @@ export default function Dashboard() {
   const statsItems = userData ? [
     {
       name: 'Interviews Completed',
-      value: userData.interviews_completed,
+      value: userData.interviews_completed ?? 0,
       icon: ChartBarIcon,
       color: 'bg-blue-500',
       description: 'Total interviews completed',
     },
     {
       name: 'Average Score',
-      value: `${userData.average_score.toFixed(1)}%`,
+      value: `${(userData.average_score ?? 0).toFixed(1)}%`,
       icon: StarIcon,
       color: 'bg-yellow-500',
       description: 'Your average performance score',
@@ -83,7 +83,6 @@ export default function Dashboard() {
 
   const handleRefresh = async () => {
     await refetch();
-  };
     navigate('/analysis');
   };
 
