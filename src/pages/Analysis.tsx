@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   BarChart3,
   Calendar,
@@ -34,26 +33,6 @@ import {
 
 const COLORS = ['#4f46e5', '#3b82f6', '#6366f1', '#8b5cf6'];
 
-interface AnalysisData {
-  overallScore: number;
-  metrics: {
-    confidence: number;
-    clarity: number;
-    engagement: number;
-    responseQuality: number;
-  };
-  feedback: {
-    strengths: string[];
-    improvements: string[];
-  };
-  recentInterviews: {
-    id: string;
-    date: string;
-    score: number;
-    duration: number;
-  }[];
-}
-
 function Analysis() {
   const {
     performanceData,
@@ -65,72 +44,35 @@ function Analysis() {
     error,
     exportPDF,
     shareReport,
+    metrics: realMetrics,
+    overallScore,
+    feedback,
+    recentInterviews,
   } = useAnalysis();
 
-  const [data] = useState<AnalysisData>({
-    overallScore: 85,
-    metrics: {
-      confidence: 80,
-      clarity: 90,
-      engagement: 75,
-      responseQuality: 85,
-    },
-    feedback: {
-      strengths: [
-        'Clear communication',
-        'Good eye contact',
-        'Well-structured responses',
-      ],
-      improvements: [
-        'Work on reducing filler words',
-        'Practice more concise answers',
-        'Improve technical depth',
-      ],
-    },
-    recentInterviews: [
-      {
-        id: '1',
-        date: '2024-03-15',
-        score: 85,
-        duration: 45,
-      },
-      {
-        id: '2',
-        date: '2024-03-10',
-        score: 78,
-        duration: 40,
-      },
-      {
-        id: '3',
-        date: '2024-03-05',
-        score: 82,
-        duration: 50,
-      },
-    ],
-  });
-
+  // Calculate metrics from communication skills and feedback data
   const metrics = [
     {
       name: 'Confidence',
-      value: data.metrics.confidence,
+      value: realMetrics?.confidence || 0,
       icon: UserGroupIcon,
       color: 'bg-blue-500',
     },
     {
       name: 'Clarity',
-      value: data.metrics.clarity,
+      value: realMetrics?.clarity || communicationSkills?.clarity || 0,
       icon: StarIcon,
       color: 'bg-green-500',
     },
     {
       name: 'Engagement',
-      value: data.metrics.engagement,
+      value: realMetrics?.engagement || communicationSkills?.bodyLanguage || 0,
       icon: ChartBarIcon,
       color: 'bg-yellow-500',
     },
     {
       name: 'Response Quality',
-      value: data.metrics.responseQuality,
+      value: realMetrics?.responseQuality || communicationSkills?.examples || 0,
       icon: ClockIcon,
       color: 'bg-purple-500',
     },
@@ -469,30 +411,32 @@ function Analysis() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
         <div className="py-4">
           {/* Overall Score */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-white shadow overflow-hidden sm:rounded-lg mb-6"
-          >
-            <div className="px-4 py-5 sm:px-6">
-              <h3 className="text-lg leading-6 font-medium text-gray-900">
-                Overall Performance Score
-              </h3>
-              <div className="mt-2 flex items-center">
-                <div className="text-4xl font-bold text-indigo-600">
-                  {data.overallScore}%
-                </div>
-                <div className="ml-4">
-                  <div className="h-2 w-32 bg-gray-200 rounded-full">
-                    <div
-                      className="h-2 bg-indigo-600 rounded-full"
-                      style={{ width: `${data.overallScore}%` }}
-                    />
+          {overallScore > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-white shadow overflow-hidden sm:rounded-lg mb-6"
+            >
+              <div className="px-4 py-5 sm:px-6">
+                <h3 className="text-lg leading-6 font-medium text-gray-900">
+                  Overall Performance Score
+                </h3>
+                <div className="mt-2 flex items-center">
+                  <div className="text-4xl font-bold text-indigo-600">
+                    {overallScore}%
+                  </div>
+                  <div className="ml-4">
+                    <div className="h-2 w-32 bg-gray-200 rounded-full">
+                      <div
+                        className="h-2 bg-indigo-600 rounded-full"
+                        style={{ width: `${overallScore}%` }}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          </motion.div>
+            </motion.div>
+          )}
 
           {/* Metrics Grid */}
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-6">
@@ -530,117 +474,125 @@ function Analysis() {
           </div>
 
           {/* Feedback Section */}
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-white shadow overflow-hidden sm:rounded-lg"
-            >
-              <div className="px-4 py-5 sm:px-6">
-                <h3 className="text-lg leading-6 font-medium text-gray-900">
-                  Strengths
-                </h3>
-                <ul className="mt-4 space-y-3">
-                  {data.feedback.strengths.map((strength, index) => (
-                    <li
-                      key={index}
-                      className="flex items-start"
-                    >
-                      <div className="flex-shrink-0">
-                        <svg
-                          className="h-5 w-5 text-green-400"
-                          xmlns="http://www.w3.org/2000/svg"
-                          viewBox="0 0 20 20"
-                          fill="currentColor"
+          {(feedback.strengths.length > 0 || feedback.improvements.length > 0) && (
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+              {feedback.strengths.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-white shadow overflow-hidden sm:rounded-lg"
+                >
+                  <div className="px-4 py-5 sm:px-6">
+                    <h3 className="text-lg leading-6 font-medium text-gray-900">
+                      Strengths
+                    </h3>
+                    <ul className="mt-4 space-y-3">
+                      {feedback.strengths.map((strength, index) => (
+                        <li
+                          key={index}
+                          className="flex items-start"
                         >
-                          <path
-                            fillRule="evenodd"
-                            d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                      </div>
-                      <p className="ml-3 text-sm text-gray-700">{strength}</p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </motion.div>
+                          <div className="flex-shrink-0">
+                            <svg
+                              className="h-5 w-5 text-green-400"
+                              xmlns="http://www.w3.org/2000/svg"
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                            >
+                              <path
+                                fillRule="evenodd"
+                                d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
+                          </div>
+                          <p className="ml-3 text-sm text-gray-700">{strength}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </motion.div>
+              )}
 
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-white shadow overflow-hidden sm:rounded-lg"
-            >
-              <div className="px-4 py-5 sm:px-6">
-                <h3 className="text-lg leading-6 font-medium text-gray-900">
-                  Areas for Improvement
-                </h3>
-                <ul className="mt-4 space-y-3">
-                  {data.feedback.improvements.map((improvement, index) => (
-                    <li
-                      key={index}
-                      className="flex items-start"
-                    >
-                      <div className="flex-shrink-0">
-                        <svg
-                          className="h-5 w-5 text-yellow-400"
-                          xmlns="http://www.w3.org/2000/svg"
-                          viewBox="0 0 20 20"
-                          fill="currentColor"
+              {feedback.improvements.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-white shadow overflow-hidden sm:rounded-lg"
+                >
+                  <div className="px-4 py-5 sm:px-6">
+                    <h3 className="text-lg leading-6 font-medium text-gray-900">
+                      Areas for Improvement
+                    </h3>
+                    <ul className="mt-4 space-y-3">
+                      {feedback.improvements.map((improvement, index) => (
+                        <li
+                          key={index}
+                          className="flex items-start"
                         >
-                          <path
-                            fillRule="evenodd"
-                            d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                      </div>
-                      <p className="ml-3 text-sm text-gray-700">{improvement}</p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </motion.div>
-          </div>
+                          <div className="flex-shrink-0">
+                            <svg
+                              className="h-5 w-5 text-yellow-400"
+                              xmlns="http://www.w3.org/2000/svg"
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                            >
+                              <path
+                                fillRule="evenodd"
+                                d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
+                          </div>
+                          <p className="ml-3 text-sm text-gray-700">{improvement}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </motion.div>
+              )}
+            </div>
+          )}
 
           {/* Recent Interviews */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mt-6 bg-white shadow overflow-hidden sm:rounded-lg"
-          >
-            <div className="px-4 py-5 sm:px-6">
-              <h3 className="text-lg leading-6 font-medium text-gray-900">
-                Recent Interviews
-              </h3>
-              <div className="mt-4">
-                <div className="flow-root">
-                  <ul className="-my-5 divide-y divide-gray-200">
-                    {data.recentInterviews.map((interview) => (
-                      <li key={interview.id} className="py-4">
-                        <div className="flex items-center space-x-4">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-gray-900 truncate">
-                              Interview on {interview.date}
-                            </p>
-                            <p className="text-sm text-gray-500">
-                              Duration: {interview.duration} minutes
-                            </p>
+          {recentInterviews.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-6 bg-white shadow overflow-hidden sm:rounded-lg"
+            >
+              <div className="px-4 py-5 sm:px-6">
+                <h3 className="text-lg leading-6 font-medium text-gray-900">
+                  Recent Interviews
+                </h3>
+                <div className="mt-4">
+                  <div className="flow-root">
+                    <ul className="-my-5 divide-y divide-gray-200">
+                      {recentInterviews.map((interview) => (
+                        <li key={interview.id} className="py-4">
+                          <div className="flex items-center space-x-4">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-900 truncate">
+                                Interview on {interview.date}
+                              </p>
+                              <p className="text-sm text-gray-500">
+                                Duration: {interview.duration} minutes
+                              </p>
+                            </div>
+                            <div>
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                Score: {interview.score}%
+                              </span>
+                            </div>
                           </div>
-                          <div>
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                              Score: {interview.score}%
-                            </span>
-                          </div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
               </div>
-            </div>
-          </motion.div>
+            </motion.div>
+          )}
         </div>
       </div>
     </div>

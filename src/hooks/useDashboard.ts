@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
+import type { Database } from '../lib/database.types';
+
+type Profile = Database['public']['Tables']['profiles']['Row'];
 
 export interface PerformanceDataPoint {
   date: string;
@@ -46,15 +49,30 @@ export function useDashboard(): UseDashboardReturn {
       setIsLoading(true);
       setError(null);
 
-      // Fetch user profile data with type assertion
+      // Fetch user profile data
+      // Use proper type from database schema
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
-        .select('full_name, email')
+        .select('full_name,email')
         .eq('id', user.id)
-        .single<Profile>();
+        .maybeSingle();
 
-      if (profileError) throw profileError;
-      if (!profileData) throw new Error('Profile not found');
+      if (profileError) {
+        console.error('Profile fetch error:', profileError);
+        // If it's a 406 error (Not Acceptable) or 404 (Not Found), it might be an RLS issue or missing profile
+        // In these cases, we'll continue with default values instead of failing completely
+        const statusCode = (profileError as any).status || (profileError as any).code;
+        if (statusCode === 406 || statusCode === 404 || profileError.code === 'PGRST116') {
+          console.warn('Profile not found or access denied (status:', statusCode, '). Using default values.');
+          // Continue with default values instead of throwing
+        } else {
+          throw profileError;
+        }
+      }
+
+      // If no profile exists, use default values
+      const fullName = profileData?.full_name || user.email?.split('@')[0] || 'User';
+      const email = profileData?.email || user.email || '';
 
       let sessions: any[] = [];
       let sessionsError: any = null;
@@ -96,15 +114,16 @@ export function useDashboard(): UseDashboardReturn {
       if (!sessions || sessions.length === 0) {
         console.log('No interview sessions found for user:', user.id);
         const dashboardData: DashboardData = {
-          name: profileData.full_name || 'User',
-          email: profileData.email || user?.email || '',
-          averageScore: 0,
-          interviewsCompleted: 0,
-          keyImprovementArea: 'Start practicing to see your metrics',
-          performanceHistory: [],
-          interviewHistory: [],
+          full_name: fullName,
+          email: email,
+          interviews_completed: 0,
+          average_score: 0,
+          latest_improvement_area: 'Start practicing to see your metrics',
+          performance_history: [],
+          interview_history: [],
         };
         setUserData(dashboardData);
+        setIsLoading(false);
         return;
       }
 
@@ -131,11 +150,9 @@ export function useDashboard(): UseDashboardReturn {
 
       // Format interview history with proper null checks
       const interviewHistory: InterviewHistoryItem[] = typedSessions.map(session => ({
-        interview_session_id: session.id,
-        date: session.created_at ? new Date(session.created_at).toISOString() : new Date().toISOString(),
-        duration: typeof session.duration_seconds === 'number' ? session.duration_seconds : 0,
+        session_id: session.id,
+        date: session.created_at ? new Date(session.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
         score: typeof session.score === 'number' ? session.score : 0,
-        status: session.status || 'completed'
       }));
 
       // Generate performance history (last 7 days)
@@ -147,25 +164,40 @@ export function useDashboard(): UseDashboardReturn {
         date.setDate(date.getDate() - i);
         const dateStr = date.toISOString().split('T')[0];
         
+        // Calculate average score for this day
+        const daySessions = typedSessions.filter(s => {
+          if (!s.created_at) return false;
+          const sessionDate = new Date(s.created_at).toISOString().split('T')[0];
+          return sessionDate === dateStr && s.status === 'completed';
+        });
+        
+        const dayScore = daySessions.length > 0
+          ? daySessions.reduce((sum, s) => sum + (typeof s.score === 'number' ? s.score : 0), 0) / daySessions.length
+          : 0;
+        
+        performanceHistory.push({
+          date: dateStr,
+          score: Math.round(dayScore * 10) / 10,
+        });
       }
 
-      const data = await response.json();
-      
-      // Transform the data to match our frontend types
-      const transformedData: DashboardData = {
-        ...data,
-        performance_history: data.performance_history?.map((item: any) => ({
-          date: new Date(item.date).toISOString().split('T')[0],
-          score: item.score,
-        })) || [],
-        interview_history: data.interview_history?.map((item: any) => ({
-          session_id: item.session_id,
-          date: new Date(item.date).toISOString().split('T')[0],
-          score: item.score,
-        })) || [],
+      // Determine latest improvement area (simplified - you may want to enhance this)
+      const latestImprovementArea = completedSessions.length > 0
+        ? 'Continue practicing to improve your scores'
+        : 'Start practicing to see your metrics';
+
+      // Build the dashboard data
+      const dashboardData: DashboardData = {
+        full_name: fullName,
+        email: email,
+        interviews_completed: completedSessions.length,
+        average_score: averageScore,
+        latest_improvement_area: latestImprovementArea,
+        performance_history: performanceHistory,
+        interview_history: interviewHistory,
       };
 
-      setUserData(transformedData);
+      setUserData(dashboardData);
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
