@@ -38,6 +38,7 @@ function App() {
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="interview" element={<LiveInterview />} />
             <Route path="analysis" element={<Analysis />} />
+            <Route path="analysis/:sessionId" element={<Analysis />} />
             <Route path="recordings" element={<Recordings />} />
             <Route path="profile" element={<Profile />} />
             <Route path="settings" element={<Settings />} />

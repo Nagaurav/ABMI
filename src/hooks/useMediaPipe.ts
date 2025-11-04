@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { FaceDetection, FaceLandmarker, FaceLandmarkerResult } from '@mediapipe/face_mesh';
-import { Camera } from '@mediapipe/camera_utils';
-import { Pose, POSE_CONNECTIONS, POSE_LANDMARKS } from '@mediapipe/pose';
+import { useCallback, useState, useEffect, useRef } from 'react';
+import * as tf from '@tensorflow/tfjs';
+import '@tensorflow/tfjs-backend-webgl';
+import '@tensorflow/tfjs-backend-cpu';
 
 interface FaceAnalysis {
   isDetected: boolean;
@@ -24,249 +24,239 @@ interface PoseAnalysis {
 }
 
 const useMediaPipe = (webcamRef: React.RefObject<HTMLVideoElement>) => {
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isModelLoading, setIsModelLoading] = useState(true);
   const [faceLandmarks, setFaceLandmarks] = useState<any[]>([]);
   const [poseLandmarks, setPoseLandmarks] = useState<any[]>([]);
-  const [faceMeshDetector, setFaceMeshDetector] = useState<FaceLandmarker | null>(null);
-  const [poseDetector, setPoseDetector] = useState<Pose | null>(null);
-  const [camera, setCamera] = useState<Camera | null>(null);
   
-  // Initialize face mesh detector
-  const initializeFaceMesh = useCallback(async () => {
-    try {
-      const faceMesh = new FaceLandmarker({
-        locateFile: (file) => {
-          return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${file}`;
-        }
-      });
-      
-      await faceMesh.setOptions({
-        maxNumFaces: 1,
-        refineLandmarks: true,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
-      });
-      
-      setFaceMeshDetector(faceMesh);
-      return faceMesh;
-    } catch (error) {
-      console.error('Error initializing face mesh:', error);
-      throw error;
-    }
-  }, []);
+  const poseDetectorRef = useRef<any>(null);
+  const animationFrameRef = useRef<number | null>(null);
   
-  // Initialize pose detector
-  const initializePose = useCallback(async () => {
-    try {
-      const pose = new Pose({
-        locateFile: (file) => {
-          return `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`;
-        }
-      });
-      
-      await pose.setOptions({
-        modelComplexity: 1,
-        smoothLandmarks: true,
-        enableSegmentation: false,
-        smoothSegmentation: true,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
-      });
-      
-      setPoseDetector(pose);
-      return pose;
-    } catch (error) {
-      console.error('Error initializing pose detection:', error);
-      throw error;
-    }
-  }, []);
-  
-  // Analyze face landmarks
-  const analyzeFace = useCallback(async (): Promise<FaceAnalysis> => {
-    if (!faceMeshDetector || !webcamRef.current) {
-      return { isDetected: false };
-    }
-    
-    try {
-      const results = await faceMeshDetector.detectForVideo(webcamRef.current, Date.now());
-      
-      if (results.faceLandmarks && results.faceLandmarks.length > 0) {
-        const landmarks = results.faceLandmarks[0];
-        setFaceLandmarks(landmarks);
+  // Initialize TensorFlow.js and models
+  useEffect(() => {
+    const initializeTensorFlow = async () => {
+      try {
+        console.log('🔄 Initializing TensorFlow.js...');
+        console.log('🌐 Browser:', navigator.userAgent.includes('Edg') ? 'Microsoft Edge' : 'Other');
         
-        // Simple expression detection (smile, eye contact, head tilt)
-        const leftEye = landmarks[33]; // Left eye inner corner
-        const rightEye = landmarks[263]; // Right eye inner corner
-        const noseTip = landmarks[1]; // Nose tip
-        const leftMouth = landmarks[61]; // Left mouth corner
-        const rightMouth = landmarks[291]; // Right mouth corner
+        // Set backend explicitly for Edge compatibility
+        if (navigator.userAgent.includes('Edg')) {
+          console.log('🔧 Configuring for Microsoft Edge...');
+          await tf.setBackend('cpu'); // Use CPU backend for Edge
+        } else {
+          try {
+            await tf.setBackend('webgl'); // Try WebGL first
+          } catch {
+            console.log('⚠️ WebGL not available, falling back to CPU');
+            await tf.setBackend('cpu');
+          }
+        }
         
-        // Calculate smile (distance between mouth corners)
-        const smileDistance = Math.sqrt(
-          Math.pow(rightMouth.x - leftMouth.x, 2) + 
-          Math.pow(rightMouth.y - leftMouth.y, 2)
+        // Initialize TensorFlow.js
+        await tf.ready();
+        console.log('✅ TensorFlow.js ready with backend:', tf.getBackend());
+        
+        // Load pose detection model with Edge-compatible settings
+        const poseDetection = await import('@tensorflow-models/pose-detection');
+        const detector = await poseDetection.createDetector(
+          poseDetection.SupportedModels.MoveNet,
+          {
+            modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
+            enableSmoothing: false, // Disable for better Edge compatibility
+            multiPoseMaxDimension: 256 // Lower resolution for better performance
+          }
         );
         
-        // Simple head tilt calculation (angle between eyes and nose)
-        const eyeCenterX = (leftEye.x + rightEye.x) / 2;
-        const eyeCenterY = (leftEye.y + rightEye.y) / 2;
-        const angle = Math.atan2(
-          noseTip.y - eyeCenterY,
-          noseTip.x - eyeCenterX
-        ) * (180 / Math.PI);
+        poseDetectorRef.current = detector;
+        console.log('✅ Pose detection model loaded for', navigator.userAgent.includes('Edg') ? 'Edge' : 'browser');
         
-        return {
-          isDetected: true,
-          landmarks,
-          expressions: {
-            smile: Math.min(1, Math.max(0, (smileDistance - 0.1) * 5)), // Normalize to 0-1
-            eyeContact: true, // Simplified - in a real app, you'd check if eyes are looking at camera
-            headTilt: {
-              x: Math.sin(angle * Math.PI / 180),
-              y: Math.cos(angle * Math.PI / 180),
-              z: 0
-            }
-          }
-        };
+        setIsModelLoading(false);
+      } catch (error) {
+        console.error('❌ Failed to initialize TensorFlow.js:', error);
+        console.log('🔄 Trying fallback initialization...');
+        
+        // Fallback: Try with minimal settings
+        try {
+          await tf.setBackend('cpu');
+          await tf.ready();
+          console.log('✅ TensorFlow.js ready with CPU fallback');
+          setIsModelLoading(false);
+        } catch (fallbackError) {
+          console.error('❌ Complete TensorFlow.js initialization failed:', fallbackError);
+          setIsModelLoading(false);
+        }
+      }
+    };
+    
+    initializeTensorFlow();
+  }, []);
+  // Analyze pose using TensorFlow.js with Edge optimizations
+  const runPoseDetection = useCallback(async () => {
+    if (!webcamRef.current || !poseDetectorRef.current || !isAnalyzing) return;
+    
+    try {
+      // Add delay for Edge performance
+      const isEdge = navigator.userAgent.includes('Edg');
+      if (isEdge) {
+        await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay for Edge
       }
       
-      return { isDetected: false };
+      const poses = await poseDetectorRef.current.estimatePoses(webcamRef.current, {
+        maxPoses: 1,
+        flipHorizontal: false,
+        scoreThreshold: 0.3 // Lower threshold for better detection
+      });
+      
+      if (poses && poses.length > 0) {
+        const pose = poses[0];
+        setPoseLandmarks(pose.keypoints);
+        
+        // Less frequent logging for Edge
+        if (!isEdge || Math.random() < 0.1) {
+          console.log('🧍 Pose detected:', pose.keypoints.length, 'keypoints');
+        }
+      } else {
+        setPoseLandmarks([]);
+      }
     } catch (error) {
-      console.error('Error analyzing face:', error);
-      return { isDetected: false };
+      console.error('❌ Error in pose detection:', error);
+      // Don't spam errors in Edge
+      if (!navigator.userAgent.includes('Edg')) {
+        console.error('Full error:', error);
+      }
     }
-  }, [faceMeshDetector, webcamRef]);
+    
+    // Continue detection loop with appropriate timing
+    if (isAnalyzing) {
+      const delay = navigator.userAgent.includes('Edg') ? 200 : 100; // Slower for Edge
+      setTimeout(() => {
+        if (isAnalyzing) {
+          animationFrameRef.current = requestAnimationFrame(runPoseDetection);
+        }
+      }, delay);
+    }
+  }, [webcamRef, isAnalyzing]);
   
-  // Analyze pose
+  // Analyze face landmarks (simplified for now - face detection not implemented)
+  const analyzeFace = useCallback(async (): Promise<FaceAnalysis> => {
+    // For now, return basic face analysis
+    // TODO: Implement face detection with TensorFlow.js face-landmarks-detection
+    return {
+      isDetected: false, // No face detection implemented yet
+      expressions: {
+        smile: 0.5,
+        eyeContact: true,
+        headTilt: { x: 0, y: 0, z: 0 }
+      }
+    };
+  }, []);
+  
+  // Analyze pose landmarks using TensorFlow.js keypoints
   const analyzePose = useCallback(async (): Promise<PoseAnalysis> => {
-    if (!poseDetector || !webcamRef.current) {
+    if (!poseLandmarks || poseLandmarks.length === 0) {
       return { isDetected: false };
     }
     
     try {
-      const results = await poseDetector.detectForVideo(webcamRef.current, Date.now());
+      // TensorFlow.js MoveNet keypoints (different indices than MediaPipe)
+      const leftShoulder = poseLandmarks.find((kp: any) => kp.name === 'left_shoulder');
+      const rightShoulder = poseLandmarks.find((kp: any) => kp.name === 'right_shoulder');
+      const leftHip = poseLandmarks.find((kp: any) => kp.name === 'left_hip');
+      const rightHip = poseLandmarks.find((kp: any) => kp.name === 'right_hip');
+      const leftWrist = poseLandmarks.find((kp: any) => kp.name === 'left_wrist');
+      const rightWrist = poseLandmarks.find((kp: any) => kp.name === 'right_wrist');
       
-      if (results.poseLandmarks) {
-        const landmarks = results.poseLandmarks;
-        setPoseLandmarks(landmarks);
-        
-        // Simple posture analysis
-        const leftShoulder = landmarks[11]; // Left shoulder
-        const rightShoulder = landmarks[12]; // Right shoulder
-        const leftHip = landmarks[23]; // Left hip
-        const rightHip = landmarks[24]; // Right hip
-        const leftWrist = landmarks[15]; // Left wrist
-        const rightWrist = landmarks[16]; // Right wrist
-        
-        // Check shoulder alignment
-        const shoulderSlope = (rightShoulder.y - leftShoulder.y) / (rightShoulder.x - leftShoulder.x);
-        const shoulderAlignment = Math.abs(shoulderSlope) < 0.2 ? 'aligned' : 
-                                shoulderSlope > 0 ? 'leaning_left' : 'leaning_right';
-        
-        // Check if back is straight (simplified)
-        const leftTorsoAngle = Math.atan2(
-          leftHip.y - leftShoulder.y,
-          leftHip.x - leftShoulder.x
-        ) * (180 / Math.PI);
-        
-        const rightTorsoAngle = Math.atan2(
-          rightHip.y - rightShoulder.y,
-          rightHip.x - rightShoulder.x
-        ) * (180 / Math.PI);
-        
-        const isHunched = Math.abs(leftTorsoAngle) > 100 || Math.abs(rightTorsoAngle) > 100;
-        
-        // Check if hands are visible
-        const handsVisible = (leftWrist.visibility > 0.5 || rightWrist.visibility > 0.5) ? 'visible' : 'hidden';
-        
-        return {
-          isDetected: true,
-          landmarks,
-          posture: {
-            shoulders: shoulderAlignment === 'aligned' ? 'aligned' : 'leaning',
-            back: isHunched ? 'hunched' : 'straight',
-            hands: handsVisible
-          }
-        };
+      if (!leftShoulder || !rightShoulder || !leftHip || !rightHip) {
+        return { isDetected: false };
       }
       
-      return { isDetected: false };
+      // Shoulder alignment analysis
+      const shoulderSlope = Math.abs(rightShoulder.y - leftShoulder.y);
+      let shoulderAlignment: 'aligned' | 'slouching' | 'leaning' = 'aligned';
+      
+      if (shoulderSlope > 20) { // Adjusted threshold for pixel coordinates
+        shoulderAlignment = 'leaning';
+      }
+      
+      // Back posture analysis (using shoulder to hip angle)
+      const leftTorsoAngle = Math.atan2(
+        leftHip.y - leftShoulder.y,
+        leftHip.x - leftShoulder.x
+      ) * (180 / Math.PI);
+      
+      const rightTorsoAngle = Math.atan2(
+        rightHip.y - rightShoulder.y,
+        rightHip.x - rightShoulder.x
+      ) * (180 / Math.PI);
+      
+      const avgTorsoAngle = (Math.abs(leftTorsoAngle) + Math.abs(rightTorsoAngle)) / 2;
+      const backPosture: 'straight' | 'hunched' = avgTorsoAngle > 100 ? 'hunched' : 'straight';
+      
+      // Hand visibility (check if wrists are detected with good confidence)
+      const leftWristVisible = leftWrist && leftWrist.score > 0.3;
+      const rightWristVisible = rightWrist && rightWrist.score > 0.3;
+      const handsVisible: 'visible' | 'hidden' = (leftWristVisible || rightWristVisible) ? 'visible' : 'hidden';
+      
+      console.log('🧍 Pose analysis:', { shoulderAlignment, backPosture, handsVisible });
+      
+      return {
+        isDetected: true,
+        landmarks: poseLandmarks,
+        posture: {
+          shoulders: shoulderAlignment,
+          back: backPosture,
+          hands: handsVisible
+        }
+      };
     } catch (error) {
       console.error('Error analyzing pose:', error);
       return { isDetected: false };
     }
-  }, [poseDetector, webcamRef]);
+  }, [poseLandmarks]);
   
   // Start detection
   const startDetection = useCallback(async () => {
-    if (!webcamRef.current) return;
+    if (!webcamRef.current || isAnalyzing || !poseDetectorRef.current) return;
     
     try {
-      // Initialize models if needed
-      const faceMesh = faceMeshDetector || await initializeFaceMesh();
-      const pose = poseDetector || await initializePose();
+      setIsAnalyzing(true);
+      console.log('🎥 Starting TensorFlow.js pose detection...');
       
-      // Set up camera
-      const camera = new Camera(webcamRef.current, {
-        onFrame: async () => {
-          if (faceMesh && webcamRef.current) {
-            await faceMesh.send({ image: webcamRef.current });
-          }
-          
-          if (pose && webcamRef.current) {
-            await pose.send({ image: webcamRef.current });
-          }
-        },
-        width: 640,
-        height: 480
-      });
+      // Start the pose detection loop
+      runPoseDetection();
       
-      await camera.start();
-      setCamera(camera);
-      setIsModelLoading(false);
-      
-      return () => {
-        camera.stop();
-      };
     } catch (error) {
-      console.error('Error starting detection:', error);
-      setIsModelLoading(false);
-      throw error;
+      console.error('❌ Error starting detection:', error);
+      setIsAnalyzing(false);
     }
-  }, [faceMeshDetector, initializeFaceMesh, initializePose, poseDetector, webcamRef]);
+  }, [webcamRef, isAnalyzing, runPoseDetection]);
   
   // Stop detection
   const stopDetection = useCallback(() => {
-    if (camera) {
-      camera.stop();
-      setCamera(null);
+    setIsAnalyzing(false);
+    
+    // Cancel animation frame
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
     }
     
     setFaceLandmarks([]);
     setPoseLandmarks([]);
-  }, [camera]);
+    console.log('🛑 TensorFlow.js analysis stopped');
+  }, []);
   
-  // Clean up on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopDetection();
-      
-      if (faceMeshDetector) {
-        faceMeshDetector.close();
-      }
-      
-      if (poseDetector) {
-        poseDetector.close();
-      }
     };
-  }, [faceMeshDetector, poseDetector, stopDetection]);
+  }, [stopDetection]);
   
   return {
     isModelLoading,
     faceLandmarks,
     poseLandmarks,
-    faceMeshDetector,
-    poseDetector,
     startDetection,
     stopDetection,
     analyzeFace,

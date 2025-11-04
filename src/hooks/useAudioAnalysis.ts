@@ -27,7 +27,6 @@ const useAudioAnalysis = () => {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const speakingStartRef = useRef<number | null>(null);
   const wordCountRef = useRef<number>(0);
@@ -46,14 +45,9 @@ const useAudioAnalysis = () => {
       analyserRef.current = audioContextRef.current.createAnalyser();
       analyserRef.current.fftSize = 2048;
       
-      // Create script processor for audio analysis
-      scriptProcessorRef.current = audioContextRef.current.createScriptProcessor(2048, 1, 1);
-      
-      // Connect audio nodes
+      // Connect audio nodes (modern approach without deprecated ScriptProcessorNode)
       mediaStreamSourceRef.current = audioContextRef.current.createMediaStreamSource(stream);
       mediaStreamSourceRef.current.connect(analyserRef.current);
-      analyserRef.current.connect(scriptProcessorRef.current);
-      scriptProcessorRef.current.connect(audioContextRef.current.destination);
       
       return audioContextRef.current;
     } catch (error) {
@@ -193,13 +187,6 @@ const useAudioAnalysis = () => {
       // Start analysis loop
       animationFrameRef.current = requestAnimationFrame(analyzeAudio);
       
-      // Set up script processor
-      if (scriptProcessorRef.current) {
-        scriptProcessorRef.current.onaudioprocess = () => {
-          // Analysis happens in the animation frame for better performance
-        };
-      }
-      
     } catch (error) {
       console.error('Error starting audio analysis:', error);
       setAnalysis(prev => ({
@@ -217,11 +204,7 @@ const useAudioAnalysis = () => {
       animationFrameRef.current = null;
     }
     
-    // Disconnect audio nodes
-    if (scriptProcessorRef.current) {
-      scriptProcessorRef.current.disconnect();
-      scriptProcessorRef.current = null;
-    }
+    // Disconnect audio nodes (ScriptProcessorNode removed - using modern approach)
     
     if (analyserRef.current) {
       analyserRef.current.disconnect();

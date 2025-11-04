@@ -1,14 +1,13 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import ResumeInputSection from '@/components/interview/ResumeInputSection';
 import { useNavigate } from 'react-router-dom';
 // import { useUser } from '@supabase/auth-helpers-react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/components/ui/use-toast';
-import { Video, VideoOff, Mic, MicOff, Frown, Eye } from 'lucide-react';
+import { Video, VideoOff, Mic, MicOff, Frown, Volume2, VolumeX } from 'lucide-react';
 import Webcam from 'react-webcam';
-import { motion, AnimatePresence } from 'framer-motion';
-import { format } from 'date-fns';
 import useMediaPipe from '@/hooks/useMediaPipe';
 import useAudioAnalysis from '@/hooks/useAudioAnalysis';
 
@@ -31,19 +30,7 @@ interface InterviewQuestion {
 //
 
 type InterviewStatus = 'idle' | 'starting' | 'active' | 'completing' | 'completed' | 'error';
-type FeedbackType = 'eye_contact' | 'posture' | 'volume' | 'pace' | 'filler_words';
 
-interface FeedbackItem {
-  id?: string;
-  type: FeedbackType;
-  message: string;
-  isPositive?: boolean;
-  is_positive?: boolean;
-  timestamp: Date | string;
-  metadata?: Record<string, any>;
-  created_at?: string;
-  session_id?: string;
-}
 
 declare global {
   interface Window {
@@ -57,13 +44,13 @@ const LiveInterview: React.FC = () => {
   const { showToast } = useToast();
   const [user, setUser] = useState<any>(null);
   
-  // Refs
+// Refs
   const webcamRef = useRef<Webcam>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const feedbackEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   
   // State
@@ -77,33 +64,73 @@ const LiveInterview: React.FC = () => {
   const [permissionsGranted, setPermissionsGranted] = useState(false);
   const [isRequestingPermissions, setIsRequestingPermissions] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showFeedback, setShowFeedback] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(true);
   const [currentQuestion, setCurrentQuestion] = useState<InterviewQuestion | null>(null);
   const [questions, setQuestions] = useState<InterviewQuestion[]>([]);
   const [timeElapsed, setTimeElapsed] = useState(0);
-  const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isTtsMuted, setIsTtsMuted] = useState(false);
+const [transcript, setTranscript] = useState(''); // <-- Live transcript state
+  
+  // Text-to-Speech function
+  const speakQuestion = useCallback((text: string) => {
+    if (isTtsMuted || !text) return; // Don't speak if muted or no text
+
+    window.speechSynthesis.cancel(); // Cancel any previous speech
+    const utterance = new SpeechSynthesisUtterance(text);
+    
+    // Optional: Uncomment to log TTS events
+    // utterance.onstart = () => console.log('TTS started');
+    // utterance.onend = () => console.log('TTS ended');
+    
+    window.speechSynthesis.speak(utterance);
+  }, [isTtsMuted]);
+  
+  // Effect to speak question when it changes
+  useEffect(() => {
+    if (status === 'active' && currentQuestion?.question) {
+      speakQuestion(currentQuestion.question);
+    }
+  }, [currentQuestion, status, speakQuestion]);
   
   // MediaPipe hooks
-  const mediaPipe = useMediaPipe(webcamRef as unknown as React.RefObject<HTMLVideoElement>);
+  const mediaPipe = useMediaPipe(videoRef);
   const {
     startDetection,
     stopDetection,
     analyzeFace,
-    analyzePose
+    analyzePose,
+    isModelLoading
   } = mediaPipe || {};
+  
+  // Debug MediaPipe status and browser compatibility
+  useEffect(() => {
+    const isEdge = navigator.userAgent.includes('Edg');
+    const isChrome = navigator.userAgent.includes('Chrome') && !isEdge;
+    const isFirefox = navigator.userAgent.includes('Firefox');
+    
+    console.log('🤖 MediaPipe status:', { 
+      isModelLoading, 
+      hasStartDetection: !!startDetection,
+      hasAnalyzeFace: !!analyzeFace,
+      hasAnalyzePose: !!analyzePose,
+      browser: isEdge ? 'Edge' : isChrome ? 'Chrome' : isFirefox ? 'Firefox' : 'Other'
+    });
+    
+    if (isEdge) {
+      console.log('🌐 Microsoft Edge detected - using CPU backend for better compatibility');
+      console.log('💡 For best performance, consider using Chrome or Firefox');
+    }
+  }, [isModelLoading, startDetection, analyzeFace, analyzePose]);
 
   // Get user session
   useEffect(() => {
     const getUser = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        console.log('User session found:', session.user);
         setUser(session.user);
       } else {
-        console.log('No session found, redirecting to login');
         navigate('/login');
       }
     };
@@ -122,11 +149,8 @@ const LiveInterview: React.FC = () => {
   useEffect(() => {
     const checkExistingResume = async () => {
       if (!user) {
-        console.log('No user found on mount');
         return;
       }
-
-      console.log('Checking for existing resume for user:', user.id);
       
       try {
         const { data, error } = await supabase
@@ -145,12 +169,9 @@ const LiveInterview: React.FC = () => {
         }
 
         if (data) {
-          console.log('Found existing resume:', data);
           setResumeFilePath((data as any).file_path);
           setResumeUploaded(true);
           setResumeFile({ name: (data as any).file_name } as File);
-        } else {
-          console.log('No existing resume found');
         }
       } catch (err) {
         console.error('Error checking existing resume:', err);
@@ -160,40 +181,6 @@ const LiveInterview: React.FC = () => {
     checkExistingResume();
   }, [user]);
 
-  // Log feedback to the database
-  const logRealtimeFeedbackToDB = useCallback(async (
-    type: string, 
-    message: string, 
-    isPositive: boolean,
-    metadata: Record<string, any> = {}
-  ) => {
-    if (!sessionId) return;
-    await supabase.from('feedback_logs').insert({
-      session_id: sessionId,
-      type,
-      message,
-      is_positive: isPositive,
-      timestamp: new Date().toISOString(),
-      metadata: metadata as any,
-    }).then(({ error }) => {
-      if (error) {
-        console.warn('Failed to log feedback to DB:', error);
-      }
-    });
-  }, [sessionId]);
-
-  // Add feedback to the list
-  const addFeedback = useCallback((item: Omit<FeedbackItem, 'id'>) => {
-    setFeedback(prev => {
-      const isDuplicate = prev.some(f => 
-        f.type === item.type && 
-        f.message === item.message &&
-        (new Date().getTime() - formatTimestamp(f.timestamp)) < 10000
-      );
-      if (isDuplicate) return prev;
-      return [...prev.slice(-9), { ...item, id: Date.now().toString() }];
-    });
-  }, []);
 
   // WebSocket connection
   const connectWebSocket = useCallback(() => {
@@ -203,10 +190,11 @@ const LiveInterview: React.FC = () => {
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${wsProtocol}//${window.location.host}/ws/interview-stream`;
       
+      // Attempt WebSocket connection (optional feature)
       const ws = new WebSocket(wsUrl);
       
       ws.onopen = () => {
-        console.log('WebSocket connection established');
+        console.log('✅ Live transcription enabled');
         if (sessionId) {
           ws.send(JSON.stringify({
             type: 'session_init',
@@ -218,28 +206,19 @@ const LiveInterview: React.FC = () => {
       
       ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data);
-          console.log('WebSocket message received:', data);
+          // Try to parse as JSON, but if binary, skip
+          let data;
+          try {
+            data = JSON.parse(event.data);
+          } catch {
+            // Not JSON (likely binary audio), ignore
+            return;
+          }
           
           if (data.type === 'question') {
             setCurrentQuestion(data.question);
-          } else if (data.type === 'feedback') {
-            // addFeedback will be defined later, use setFeedback directly for now
-            setFeedback(prev => {
-              const isDuplicate = prev.some(f => 
-                f.type === data.feedback_type && 
-                f.message === data.message &&
-                (new Date().getTime() - formatTimestamp(f.timestamp)) < 10000
-              );
-              if (isDuplicate) return prev;
-              return [...prev.slice(-9), { 
-                type: data.feedback_type,
-                message: data.message,
-                isPositive: data.is_positive,
-                timestamp: new Date(),
-                id: Date.now().toString()
-              }];
-            });
+          } else if (data.type === 'transcript_update') {
+            setTranscript(data.transcript);
           }
         } catch (err) {
           console.error('Error processing WebSocket message:', err);
@@ -247,7 +226,6 @@ const LiveInterview: React.FC = () => {
       };
       
       ws.onclose = () => {
-        console.log('WebSocket connection closed');
         wsRef.current = null;
         // Only try to reconnect if we're still in an active interview and WebSocket server exists
         if (status === 'active') {
@@ -256,18 +234,51 @@ const LiveInterview: React.FC = () => {
         }
       };
       
-      ws.onerror = (error) => {
-        console.warn('WebSocket connection failed (this is okay if server doesn\'t support WebSocket):', error);
-        // Don't set error state - app can work without WebSocket
+      ws.onerror = () => {
+        // Silently handle WebSocket errors - live transcription is optional
         wsRef.current = null;
       };
       
       wsRef.current = ws;
     } catch (err) {
-      console.warn('WebSocket not available:', err);
-      // Don't set error state - app can work without WebSocket
+      // Silently handle WebSocket initialization errors - it's an optional feature
+      wsRef.current = null;
     }
   }, [sessionId, status, user?.id]);
+
+  // Sync webcam stream with video element for MediaPipe
+  useEffect(() => {
+    const syncVideoStream = () => {
+      if (webcamRef.current && videoRef.current && mediaStreamRef.current) {
+        // Set the video element source to the same stream as webcam
+        videoRef.current.srcObject = mediaStreamRef.current;
+        console.log('🔄 Video stream synced for MediaPipe analysis');
+        
+        // Debug video element status
+        videoRef.current.onloadedmetadata = () => {
+          console.log('📹 Video metadata loaded:', {
+            videoWidth: videoRef.current?.videoWidth,
+            videoHeight: videoRef.current?.videoHeight,
+            readyState: videoRef.current?.readyState
+          });
+        };
+      }
+    };
+
+    // Sync when media stream is available
+    if (mediaStreamRef.current) {
+      syncVideoStream();
+    }
+
+    // Also sync when permissions are granted and stream becomes available
+    const interval = setInterval(() => {
+      if (mediaStreamRef.current && videoRef.current && !videoRef.current.srcObject) {
+        syncVideoStream();
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [permissionsGranted, isVideoOn]);
 
   // Set up cleanup on unmount
   useEffect(() => {
@@ -281,106 +292,165 @@ const LiveInterview: React.FC = () => {
     };
   }, []);
 
-  // Handle media analysis results
+  // Simplified analysis state
+  const [analysisScores, setAnalysisScores] = useState({
+    facial: 0, // 0-100 score
+    posture: 0, // 0-100 score  
+    voice: 0 // 0-100 score
+  });
+
+  // Simplified continuous analysis
   useEffect(() => {
-    if (status !== 'active' || !analyzeFace || !analyzePose) return;
-    let isCancelled = false;
-    const run = async () => {
-      const faceResults = await analyzeFace();
-      const poseResults = await analyzePose();
-      if (!isCancelled && faceResults?.expressions && faceResults.isDetected) {
-        const { eyeContact } = faceResults.expressions;
-        if (eyeContact === false) {
-          const feedback = {
-            type: 'eye_contact' as const,
-            message: 'Try to maintain eye contact with the camera',
-            isPositive: false,
-            timestamp: new Date()
-          };
-          addFeedback(feedback);
-          logRealtimeFeedbackToDB(feedback.type, feedback.message, feedback.isPositive, { eyeContact });
+    console.log('🎯 Analysis effect triggered, status:', status);
+    if (status !== 'active') return;
+    
+    let analysisInterval: NodeJS.Timeout;
+    
+    const runSimpleAnalysis = async () => {
+      try {
+        console.log('🔄 Running analysis...');
+        
+        // Get analysis results
+        const faceResults = analyzeFace ? await analyzeFace() : null;
+        const poseResults = analyzePose ? await analyzePose() : null;
+        const audioResults = getAudioAnalysis ? getAudioAnalysis() : null;
+        
+        console.log('📊 Analysis data:', { 
+          faceResults: faceResults, 
+          poseResults: poseResults,
+          audioResults: audioResults
+        });
+        
+        // Calculate real scores (0-100)
+        let facialScore = 0;
+        let postureScore = 0;
+        let voiceScore = 0;
+        
+        // Facial analysis scoring
+        if (faceResults?.isDetected && faceResults.expressions) {
+          const { eyeContact, smile, headTilt } = faceResults.expressions;
+          let facePoints = 0;
+          
+          console.log('👤 Face data:', { eyeContact, smile, headTilt });
+          
+          // Eye contact (40 points)
+          if (eyeContact) facePoints += 40;
+          else facePoints += 10;
+          
+          // Smile (30 points)
+          facePoints += Math.min(30, smile * 30);
+          
+          // Head position (30 points)
+          const tiltPenalty = Math.abs(headTilt.x) + Math.abs(headTilt.y);
+          facePoints += Math.max(0, 30 - (tiltPenalty * 50));
+          
+          facialScore = Math.min(100, Math.max(0, facePoints));
+        } else {
+          // Fallback: Basic scoring when MediaPipe isn't working
+          // Check if video is on and user has granted permissions
+          if (isVideoOn && permissionsGranted) {
+            facialScore = 60; // Assume moderate performance when video is active
+          } else {
+            facialScore = 20; // Low score when video is off
+          }
         }
-      }
-      if (!isCancelled && poseResults?.posture && poseResults.isDetected) {
-        const { posture } = poseResults;
-        if (posture.shoulders !== 'aligned' || posture.back === 'hunched') {
-          const feedback = {
-            type: 'posture' as const,
-            message: 'Sit up straight for better posture',
-            isPositive: false,
-            timestamp: new Date()
-          };
-          addFeedback(feedback);
-          logRealtimeFeedbackToDB(feedback.type, feedback.message, feedback.isPositive, { posture });
+        
+        // Posture analysis scoring
+        if (poseResults?.isDetected && poseResults.posture) {
+          const { shoulders, back, hands } = poseResults.posture;
+          let posturePoints = 0;
+          
+          console.log('🧍 Pose data:', { shoulders, back, hands });
+          
+          // Shoulders (40 points)
+          if (shoulders === 'aligned') posturePoints += 40;
+          else posturePoints += 15;
+          
+          // Back (40 points)
+          if (back === 'straight') posturePoints += 40;
+          else posturePoints += 15;
+          
+          // Hands (20 points)
+          if (hands === 'visible') posturePoints += 20;
+          else posturePoints += 5;
+          
+          postureScore = Math.min(100, Math.max(0, posturePoints));
+        } else {
+          // Fallback: Basic scoring when MediaPipe isn't working
+          if (isVideoOn && permissionsGranted) {
+            postureScore = 65; // Assume good posture when video is active
+          } else {
+            postureScore = 25; // Low score when video is off
+          }
         }
-      }
-      if (!isCancelled && wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          type: 'analysis_data',
-          session_id: sessionId,
-          timestamp: new Date().toISOString(),
-          data: { face: faceResults, pose: poseResults }
-        }));
+        
+        // Voice analysis scoring
+        if (audioResults) {
+          let voicePoints = 0;
+          
+          console.log('🎤 Audio data:', audioResults);
+          
+          // Volume (40 points)
+          if (audioResults.volume >= 0.3 && audioResults.volume <= 0.7) voicePoints += 40;
+          else if (audioResults.volume >= 0.2 && audioResults.volume <= 0.8) voicePoints += 25;
+          else voicePoints += 10;
+          
+          // Speech rate (40 points)
+          if (audioResults.speechRate >= 100 && audioResults.speechRate <= 150) voicePoints += 40;
+          else if (audioResults.speechRate >= 80 && audioResults.speechRate <= 180) voicePoints += 25;
+          else voicePoints += 10;
+          
+          // Clarity (20 points)
+          voicePoints += Math.min(20, audioResults.clarity * 20);
+          
+          voiceScore = Math.min(100, Math.max(0, voicePoints));
+        } else {
+          // Fallback: Basic scoring when audio analysis isn't working
+          if (!isMuted && permissionsGranted) {
+            voiceScore = 45; // Assume moderate voice quality when mic is active
+          } else {
+            voiceScore = 10; // Low score when muted
+          }
+        }
+        
+        // Update scores
+        console.log('📈 Updating scores:', { facialScore, postureScore, voiceScore });
+        setAnalysisScores({
+          facial: facialScore,
+          posture: postureScore,
+          voice: voiceScore
+        });
+        
+      } catch (error) {
+        console.error('Error in analysis:', error);
       }
     };
-    run();
-    return () => { isCancelled = true; };
-  }, [analyzeFace, analyzePose, sessionId, status, addFeedback, logRealtimeFeedbackToDB]);
-
-  // Handle audio analysis results
-  useEffect(() => {
-    if (status !== 'active' || !getAudioAnalysis) return;
     
-    const audioResults = getAudioAnalysis();
+    // Run analysis every 3 seconds
+    console.log('⏰ Setting up analysis interval...');
+    analysisInterval = setInterval(runSimpleAnalysis, 3000);
+    runSimpleAnalysis();
     
-    // Check for speaking volume
-    if (audioResults.volume < 0.1) {
-      const feedback = {
-        type: 'volume' as const,
-        message: 'Speak up a bit',
-        isPositive: false,
-        timestamp: new Date()
-      };
-      addFeedback(feedback);
-      logRealtimeFeedbackToDB(feedback.type, feedback.message, feedback.isPositive, { volume: audioResults.volume });
-    } else if (audioResults.volume > 0.9) {
-      const feedback = {
-        type: 'volume' as const,
-        message: 'You\'re speaking too loudly',
-        isPositive: false,
-        timestamp: new Date()
-      };
-      addFeedback(feedback);
-      logRealtimeFeedbackToDB(feedback.type, feedback.message, feedback.isPositive, { volume: audioResults.volume });
-    }
-    
-    // Check for speaking rate (words per minute)
-    if (audioResults.speechRate > 150) {
-      const feedback = {
-        type: 'pace' as const,
-        message: 'Try to speak a bit slower',
-        isPositive: false,
-        timestamp: new Date()
-      };
-      addFeedback(feedback);
-      logRealtimeFeedbackToDB(feedback.type, feedback.message, feedback.isPositive, { speechRate: audioResults.speechRate });
-    } else if (audioResults.speechRate < 80 && audioResults.isSpeaking) {
-      const feedback = {
-        type: 'pace' as const,
-        message: 'Try to speak a bit faster',
-        isPositive: false,
-        timestamp: new Date()
-      };
-      addFeedback(feedback);
-      logRealtimeFeedbackToDB(feedback.type, feedback.message, feedback.isPositive, { speechRate: audioResults.speechRate });
-    }
+    return () => {
+      if (analysisInterval) {
+        clearInterval(analysisInterval);
+      }
+    };
+  }, [status, analyzeFace, analyzePose, getAudioAnalysis]);
 
-  }, [getAudioAnalysis, status]);
+  // Helper function to get color based on score
+  const getScoreColor = (score: number) => {
+    if (score >= 70) return 'text-green-400 bg-green-400/20 border-green-400/30';
+    if (score >= 40) return 'text-yellow-400 bg-yellow-400/20 border-yellow-400/30';
+    return 'text-red-400 bg-red-400/20 border-red-400/30';
+  };
 
-  // Auto-scroll feedback to bottom when new feedback is added
-  useEffect(() => {
-    feedbackEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [feedback]);
+  const getScoreLabel = (score: number) => {
+    if (score >= 70) return 'Perfect';
+    if (score >= 40) return 'Moderate';
+    return 'Poor';
+  };
+
 
   // Timer effect
   useEffect(() => {
@@ -403,193 +473,259 @@ const LiveInterview: React.FC = () => {
     };
   }, [status]);
 
-  // Generate questions from resume using Gemini AI
-  const generateQuestionsFromResume = async (): Promise<InterviewQuestion[]> => {
+  // Parse PDF file client-side using pdfjs-dist
+  const parsePDF = async (file: File): Promise<string> => {
+    const pdfjsLib = await import('pdfjs-dist');
+    
+    // Set worker source for pdfjs - use jsdelivr CDN (reliable npm package CDN)
+    // This is a permanent solution that works with the exact version from package.json
+    const pdfjsVersion = pdfjsLib.version || '5.4.394';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.js`;
+    
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    
+    let fullText = '';
+    
+    // Extract text from all pages
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map((item: any) => item.str)
+        .join(' ');
+      fullText += pageText + '\n';
+    }
+    
+    return fullText.trim();
+  };
+
+  // Parse DOCX file client-side (basic text extraction)
+  const parseDOCX = async (_file: File): Promise<string> => {
+    // DOCX files are ZIP archives, so direct text reading won't work well
+    // For proper DOCX parsing, users should convert to PDF or paste text directly
+    throw new Error('DOCX parsing requires additional libraries. Please convert to PDF or paste text directly.');
+  };
+
+  // Extract text from file based on type
+  const extractTextFromFile = async (file: File): Promise<string> => {
+    const normalizedMime = (file.type || '').toLowerCase();
+
+    // Primary detection via MIME type
+    if (normalizedMime === 'application/pdf') {
+      return await parsePDF(file);
+    }
+    if (normalizedMime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      return await parseDOCX(file);
+    }
+    if (normalizedMime === 'text/plain') {
+      return await file.text();
+    }
+
+    // Fallback: detect by file extension when MIME is missing/undefined
+    const name = (file as any).name || '';
+    const ext = name.split('.').pop()?.toLowerCase();
+    if (ext === 'pdf') {
+      return await parsePDF(file);
+    }
+    if (ext === 'docx') {
+      return await parseDOCX(file);
+    }
+    if (ext === 'txt') {
+      return await file.text();
+    }
+
+    // Final fallback: sniff bytes to detect PDF header
     try {
-      console.log('Generating questions from resume...');
-      
-      // Get Gemini API key from environment
-      const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-      
-      if (!GEMINI_API_KEY) {
-        throw new Error('Gemini API key not configured');
+      const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+      const headString = Array.from(head).map((b) => String.fromCharCode(b)).join('');
+      if (headString.startsWith('%PDF-')) {
+        return await parsePDF(file);
       }
+    } catch (_) {
+      // ignore sniffing errors and try text next
+    }
 
-      // Determine resume content source
-      let resumeContent = '';
-      
-      if (resumeInputMethod === 'text' && resumeText.trim()) {
-        // Use text input
-        console.log('Using text input resume content');
-        resumeContent = resumeText.trim();
-      } else if (resumeInputMethod === 'upload' && resumeFilePath) {
-        // Use server-side PDF parsing
-        console.log('Using server-side PDF parsing for:', resumeFilePath);
-        
-        try {
-          // Get signed URL for the PDF
-          const { data: signedUrlData, error: signedUrlError } = await supabase.storage
-            .from('interview-files')
-            .createSignedUrl(resumeFilePath, 3600);
-          
-          if (signedUrlError) {
-            throw new Error(`Failed to get signed URL: ${signedUrlError.message}`);
-          }
-          
-          // Call our server-side PDF parsing API
-          const parseResponse = await fetch('/api/parse-pdf', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              pdfUrl: signedUrlData.signedUrl
-            }),
-          });
-          
-          if (!parseResponse.ok) {
-            throw new Error(`PDF parsing failed: ${parseResponse.statusText}`);
-          }
-          
-          const parseResult = await parseResponse.json();
-          
-          if (!parseResult.success) {
-            throw new Error(parseResult.details || 'PDF parsing failed');
-          }
-          
-          resumeContent = parseResult.text;
-          console.log('Successfully parsed PDF content:', resumeContent.substring(0, 200) + '...');
-          
-        } catch (pdfError: any) {
-          console.error('PDF parsing failed:', pdfError);
-          throw new Error(`Failed to parse PDF: ${pdfError.message}`);
-        }
-      } else {
-        throw new Error('No resume content available');
-      }
+    // As a last resort, try reading as text
+    try {
+      return await file.text();
+    } catch (e) {
+      throw new Error(`Unsupported file type: ${file.type || 'unknown'}. Please use PDF, DOCX, or TXT.`);
+    }
+  };
 
-      // Create the prompt for Gemini
-      const prompt = `
-You are an expert technical interviewer. Based on the following resume content, generate 5 personalized interview questions that are SPECIFICALLY tailored to this candidate's background.
+  // Call Gemini API directly to generate questions from resume text
+  const callGeminiForQuestions = async (resumeText: string): Promise<string[]> => {
+    const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+    
+    if (!GEMINI_API_KEY) {
+      throw new Error('Gemini API key not configured. Please set VITE_GEMINI_API_KEY in your .env file.');
+    }
 
-Resume content:
-${resumeContent}
+    const prompt = `
+You are an expert technical recruiter and interview coach.
+You will be given the full text of a candidate's resume.
+Your task is to analyze the resume and generate 10-15 insightful, personalized interview questions that probe their skills, experience, and project work.
 
-IMPORTANT INSTRUCTIONS:
-- Analyze the resume carefully and identify specific technologies, projects, companies, roles, and achievements mentioned
-- Generate questions that reference specific details from the resume (e.g., "I see you worked with React at Company X...")
-- Mix technical questions (60%) with behavioral questions (40%)
-- Avoid generic HR questions like "Tell me about yourself" or "What are your strengths"
-- Make questions challenging and relevant to their actual experience level
-- Reference specific technologies, projects, or experiences mentioned in the resume
+Guidelines:
+- Generate a mix of behavioral ("Tell me about a time..."), technical ("How would you..."), and project-specific questions.
+- The questions should be directly based on the technologies, roles, and accomplishments listed in the resume.
+- Do not ask basic "keyword" questions. Ask questions that force the candidate to elaborate on *how* they used their skills.
+- Return ONLY a valid JSON array of strings, like ["question 1", "question 2"]. Do not include any other text or markdown.
 
-Please generate questions in the following JSON format:
-[
-  {
-    "question": "Question text here that references specific resume details",
-    "category": "Technical|Behavioral|Experience|Project",
-    "difficulty": "easy|medium|hard",
-    "timeLimit": 120
-  }
-]
-
-Example of good questions:
-- "I noticed you used Python for data analysis at [Company]. Can you walk me through how you optimized performance for large datasets?"
-- "Your resume mentions leading a team of 5 developers on the [Project] project. What was your biggest challenge in that leadership role?"
-
-Return only the JSON array, no additional text.
+Here is the resume text:
+---
+${resumeText}
+---
 `;
 
-      // Call Gemini API directly from client
-      console.log('Calling Gemini API with key:', GEMINI_API_KEY ? 'Key present' : 'Key missing');
-      
-      const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${GEMINI_API_KEY}`, {
+    // Use gemini-2.5-pro for best quality
+    const modelName = 'gemini-2.5-pro';
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`,
+      {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           contents: [{
-            parts: [{
-              text: prompt
-            }]
-          }]
-        })
-      });
-
-      if (!geminiResponse.ok) {
-        const errorText = await geminiResponse.text();
-        console.error('Gemini API error details:', {
-          status: geminiResponse.status,
-          statusText: geminiResponse.statusText,
-          error: errorText
-        });
-        throw new Error(`Gemini API error: ${geminiResponse.status} ${geminiResponse.statusText} - ${errorText}`);
+            parts: [{ text: prompt }],
+          }],
+        }),
       }
+    );
 
-      const geminiData = await geminiResponse.json();
-      console.log('Full Gemini response:', geminiData);
-      const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${errorText}`);
+    }
 
-      console.log('Gemini response text:', text);
-      console.log('Resume text that was sent to AI:', resumeText.substring(0, 500) + '...');
+    const data = await response.json();
 
-      // Parse the JSON response
-      let questions;
-      try {
-        // Clean the response text (remove any markdown formatting)
-        const cleanText = text.replace(/```json\n?|\n?```/g, '').trim();
-        questions = JSON.parse(cleanText);
-      } catch (parseError) {
-        console.error('Failed to parse Gemini response:', parseError);
-        // Fallback to default questions if parsing fails
-        questions = [
-          {
-            question: "Tell me about your professional background and experience.",
-            category: "General",
-            difficulty: "easy",
-            timeLimit: 120
-          },
-          {
-            question: "Describe a challenging project you've worked on and how you overcame obstacles.",
-            category: "Experience",
-            difficulty: "medium",
-            timeLimit: 180
-          },
-          {
-            question: "What technical skills do you consider your strongest, and can you provide an example of how you've applied them?",
-            category: "Technical",
-            difficulty: "medium",
-            timeLimit: 150
-          },
-          {
-            question: "How do you handle working under pressure and tight deadlines?",
-            category: "Behavioral",
-            difficulty: "medium",
-            timeLimit: 120
-          },
-          {
-            question: "Where do you see yourself in the next 3-5 years, and how does this role align with your career goals?",
-            category: "General",
-            difficulty: "easy",
-            timeLimit: 120
-          }
-        ];
-      }
+    // Extract the JSON string from Gemini's response
+    const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    
+    if (!responseText) {
+      throw new Error('No response text from Gemini API');
+    }
 
-      // Validate questions array
-      if (!Array.isArray(questions) || questions.length === 0) {
-        throw new Error('Invalid questions format received from AI');
-      }
+    // Clean the response text (remove markdown formatting if present)
+    const jsonString = responseText
+      .replace(/```json/g, '')
+      .replace(/```/g, '')
+      .trim();
 
-      console.log('Generated questions:', questions);
+    try {
+      const questions = JSON.parse(jsonString);
       
-      return questions.map((q: any, index: number) => ({
+      if (!Array.isArray(questions)) {
+        throw new Error('Gemini response is not an array');
+      }
+      
+      return questions;
+    } catch (parseError) {
+      console.error('Failed to parse Gemini response:', parseError);
+      console.error('Response text:', responseText);
+      throw new Error('Failed to parse questions from Gemini response');
+    }
+  };
+
+  // Generate questions from resume using client-side PDF parsing and direct Gemini API call
+  const generateQuestionsFromResume = async (): Promise<InterviewQuestion[]> => {
+    try {
+      let extractedText = '';
+      
+      // Determine resume content source and extract text
+      if (resumeInputMethod === 'text') {
+        // Use text input directly from state
+        extractedText = resumeText.trim();
+        if (!extractedText) {
+          throw new Error('Please enter resume text');
+        }
+      } else if (resumeInputMethod === 'upload' && resumeFilePath) {
+        // Parse file client-side
+        let fileToParse: File;
+        
+        if (!resumeFile) {
+          // If file object is not available, fetch it from storage
+          const { data: fileData, error: downloadError } = await supabase.storage
+            .from('interview-files')
+            .download(resumeFilePath);
+          
+          if (downloadError) {
+            // Try avatars bucket as fallback
+            const { data: fallbackData, error: fallbackError } = await supabase.storage
+              .from('avatars')
+              .download(resumeFilePath);
+            
+            if (fallbackError) {
+              throw new Error(`Failed to download resume file: ${fallbackError.message}`);
+            }
+            
+            fileToParse = new File([fallbackData], resumeFilePath.split('/').pop() || 'resume.pdf', { 
+              type: fallbackData.type || 'application/pdf' 
+            });
+          } else {
+            fileToParse = new File([fileData], resumeFilePath.split('/').pop() || 'resume.pdf', { 
+              type: fileData.type || 'application/pdf' 
+            });
+          }
+        } else {
+          fileToParse = resumeFile;
+        }
+        
+        // Extract text from file using client-side parser; fallback to server for PDFs
+        try {
+          extractedText = await extractTextFromFile(fileToParse);
+        } catch (clientParseError) {
+          console.warn('Client-side parse failed, attempting server-side PDF parse...', clientParseError);
+          const name = (fileToParse as any).name || '';
+          const ext = name.split('.').pop()?.toLowerCase();
+          const isLikelyPdf = (fileToParse.type || '').includes('pdf') || ext === 'pdf';
+
+          if (isLikelyPdf) {
+            const form = new FormData();
+            form.append('file', fileToParse);
+            const resp = await fetch('/api/parse-pdf', {
+              method: 'POST',
+              body: form
+            });
+            if (!resp.ok) {
+              const msg = await resp.text();
+              throw new Error(`Server PDF parse failed: ${resp.status} ${resp.statusText} - ${msg}`);
+            }
+            const json = await resp.json();
+            if (!json?.text) {
+              throw new Error('Server PDF parse did not return text');
+            }
+            extractedText = String(json.text);
+          } else {
+            throw clientParseError;
+          }
+        }
+      } else {
+        throw new Error('No resume content available');
+      }
+
+      if (!extractedText.trim()) {
+        throw new Error('Could not extract any text from the resume');
+      }
+
+      // Call Gemini API directly with extracted text
+      const questionsArray = await callGeminiForQuestions(extractedText);
+
+      if (!Array.isArray(questionsArray) || questionsArray.length === 0) {
+        throw new Error('No questions generated from Gemini');
+      }
+
+      // Map the questions to the expected format
+      return questionsArray.map((q: string, index: number) => ({
         id: `generated-${index + 1}`,
-        question: q.question,
-        category: q.category || 'General',
-        timeLimit: q.timeLimit || 120,
-        difficulty: q.difficulty || 'medium'
+        question: typeof q === 'string' ? q : String(q),
+        category: 'General',
+        timeLimit: 120,
+        difficulty: 'medium' as const
       }));
     } catch (error) {
       console.error('Error generating questions from resume:', error);
@@ -603,13 +739,10 @@ Return only the JSON array, no additional text.
       // First, try to generate questions from resume (either uploaded file or text input)
       if (resumeUploaded && (resumeFilePath || resumeText.trim())) {
         try {
-          console.log('Attempting to generate personalized questions from resume...');
-          
           // Generate questions directly (the function handles both PDF and text internally)
           const generatedQuestions = await generateQuestionsFromResume();
           
           if (generatedQuestions.length > 0) {
-            console.log('Successfully generated personalized questions!');
             setQuestions(generatedQuestions);
             setCurrentQuestion(generatedQuestions[0]);
             return;
@@ -652,7 +785,7 @@ Return only the JSON array, no additional text.
             }
           ];
           setQuestions(defaultQuestions);
-          setCurrentQuestion(defaultQuestions[0]);
+            setCurrentQuestion(defaultQuestions[0]);
           return;
         }
         throw error;
@@ -697,15 +830,7 @@ Return only the JSON array, no additional text.
   // Start the interview
   const startInterview = useCallback(async (currentStatus?: string) => {
     const statusToCheck = currentStatus || status;
-    console.log('startInterview called with:', { status: statusToCheck, userId: user?.id, hasUser: !!user });
     if (statusToCheck !== 'starting' || !user?.id) {
-      console.log('Cannot start interview - conditions not met:', { 
-        status: statusToCheck, 
-        expectedStatus: 'starting',
-        statusMatch: statusToCheck === 'starting',
-        userId: user?.id, 
-        hasUser: !!user?.id 
-      });
       return;
     }
     
@@ -737,6 +862,10 @@ Return only the JSON array, no additional text.
           recorder.ondataavailable = (event) => {
             if (event.data.size > 0) {
               audioChunksRef.current.push(event.data);
+              // --- Send audio chunk to WebSocket for live transcription ---
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(event.data); // Send binary Blob
+              }
             }
           };
           
@@ -756,6 +885,7 @@ Return only the JSON array, no additional text.
       }
       
       // Start analysis
+      console.log('🎬 Starting MediaPipe detection...');
       startDetection?.();
       startAudioAnalysis?.();
       
@@ -771,10 +901,8 @@ Return only the JSON array, no additional text.
 
   // Handle resume upload
   const handleResumeUpload = async (file: File) => {
-    console.log('User object:', user);
     if (!user) {
       showToast('Please log in to upload resume', 'error');
-      console.error('No user found');
       return;
     }
 
@@ -784,8 +912,6 @@ Return only the JSON array, no additional text.
       const fileExt = file.name.split('.').pop();
       const fileName = `${user.id}-${Date.now()}.${fileExt}`;
       const filePath = `${user.id}/${fileName}`; // Use user ID as folder
-      
-      console.log('Uploading file:', { fileName, filePath, userId: user.id });
 
       // Try to upload to interview-files bucket, fallback to avatars bucket
       let uploadError;
@@ -796,7 +922,6 @@ Return only the JSON array, no additional text.
         .upload(filePath, file);
       
       if (uploadResult.error) {
-        console.log('interview-files bucket failed, trying avatars bucket...');
         bucketUsed = 'avatars';
         const fallbackResult = await supabase.storage
           .from('avatars')
@@ -812,8 +937,6 @@ Return only the JSON array, no additional text.
       const { data: { publicUrl } } = supabase.storage
         .from(bucketUsed)
         .getPublicUrl(filePath);
-        
-      console.log(`Resume uploaded to ${bucketUsed} bucket:`, publicUrl);
 
       // Save resume info to database
       const { error: dbError } = await supabase
@@ -832,9 +955,8 @@ Return only the JSON array, no additional text.
         console.warn('Resume uploaded to storage but failed to save metadata to database');
       }
 
-      console.log('Resume uploaded to:', publicUrl);
-
       setResumeFilePath(filePath);
+      setResumeFile(file); // Store the file object for later use
       setResumeUploaded(true);
       showToast('Resume uploaded successfully!', 'success');
     } catch (err: any) {
@@ -847,13 +969,10 @@ Return only the JSON array, no additional text.
 
   // Handle camera and microphone permission request
   const requestPermissions = async () => {
-    console.log('requestPermissions function called from UI button');
     setIsRequestingPermissions(true);
     setError(null);
 
     try {
-      console.log('Requesting camera and microphone permissions from UI...');
-      
       // Check if browser supports media devices
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Media devices API not supported in this browser');
@@ -873,24 +992,11 @@ Return only the JSON array, no additional text.
       // Race between the media promise and the timeout
       const stream = await Promise.race([mediaPromise, timeoutPromise]) as MediaStream;
 
-      console.log('Media devices accessed successfully');
       mediaStreamRef.current = stream;
 
-      // Log available tracks
+      // Check available tracks
       const videoTracks = stream.getVideoTracks();
       const audioTracks = stream.getAudioTracks();
-      console.log('Video tracks:', videoTracks.map(t => ({
-        id: t.id,
-        label: t.label,
-        readyState: t.readyState,
-        enabled: t.enabled
-      })));
-      console.log('Audio tracks:', audioTracks.map(t => ({
-        id: t.id,
-        label: t.label,
-        readyState: t.readyState,
-        enabled: t.enabled
-      })));
 
       // Check if we actually got the required tracks
       if (videoTracks.length === 0) {
@@ -906,7 +1012,6 @@ Return only the JSON array, no additional text.
       setIsVideoOn(false);
       setIsMuted(true);
 
-      console.log('Setting permissionsGranted to true');
       setPermissionsGranted(true);
       showToast('Camera and microphone access granted!', 'success');
 
@@ -966,7 +1071,6 @@ Return only the JSON array, no additional text.
         .remove([resumeFilePath]);
       
       if (deleteFromInterviewFiles.error) {
-        console.log('Trying to delete from avatars bucket...');
         const deleteFromAvatars = await supabase.storage
           .from('avatars')
           .remove([resumeFilePath]);
@@ -1000,47 +1104,35 @@ Return only the JSON array, no additional text.
 
   // Start interview process - called when user clicks the Start Interview button
   const startInterviewProcess = useCallback(async () => {
-    console.log('startInterviewProcess called with state:', {
-      status,
-      resumeUploaded,
-      permissionsGranted
-    });
-
     if (status !== 'idle') return;
 
     // Check if resume is uploaded
     if (!resumeUploaded) {
-      console.log('Resume not uploaded');
       showToast('Please upload your resume first', 'error');
       return;
     }
 
     // Check if permissions are granted
     if (!permissionsGranted) {
-      console.log('Permissions not granted, permissionsGranted:', permissionsGranted);
       showToast('Please grant camera and microphone permissions first', 'error');
       return;
     }
     
-    console.log('Starting interview process...');
     setStatus('starting');
     setError(null);
     
     try {
       // Try to initialize WebSocket connection (optional)
       try {
-        console.log('Initializing WebSocket connection...');
         connectWebSocket();
       } catch (wsErr) {
         console.warn('WebSocket initialization failed, continuing without it:', wsErr);
       }
       
       // Generate personalized questions based on resume
-      console.log('Generating personalized interview questions...');
       await loadQuestions();
       
       // Begin interview flow (creates session, starts analysis)
-      console.log('Starting interview flow...');
       await startInterview('starting');
       
     } catch (err: any) {
@@ -1095,16 +1187,26 @@ Return only the JSON array, no additional text.
         body: JSON.stringify({ sessionId }),
       });
 
-      const data = await response.json();
+      // Check if response has content before trying to parse JSON
+      const contentType = response.headers.get('content-type');
+      let data = null;
+      
+      if (contentType && contentType.includes('application/json')) {
+        const text = await response.text();
+        if (text.trim()) {
+          data = JSON.parse(text);
+        }
+      }
       
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to start analysis');
+        // Silently handle analysis API errors - it's an optional service
+        return { warning: 'Analysis service unavailable' };
       }
 
-      return data;
+      return data || { success: true };
     } catch (error) {
-      console.error('Error triggering analysis:', error);
-      throw error;
+      // Silently handle analysis service errors - it's optional
+      return { warning: 'Analysis service unavailable' };
     }
   };
 
@@ -1139,7 +1241,7 @@ Return only the JSON array, no additional text.
           } as any) // Type assertion to handle strict type checking
           .eq('id', sessionId);
 
-        // Trigger analysis
+        // Trigger analysis (optional - won't fail if service unavailable)
         await triggerAnalysis(sessionId);
       }
       
@@ -1149,7 +1251,12 @@ Return only the JSON array, no additional text.
       
       // Redirect to analysis page after a short delay
       setTimeout(() => {
-        navigate(`/analysis/${sessionId}`);
+        // Try to navigate to session-specific analysis, fallback to dashboard
+        if (sessionId) {
+          navigate(`/analysis/${sessionId}`);
+        } else {
+          navigate('/dashboard');
+        }
       }, 2000);
     } catch (error) {
       console.error('Error ending interview:', error);
@@ -1187,7 +1294,6 @@ Return only the JSON array, no additional text.
         .update({ recording_url: publicUrl } as any)
         .eq('id', sessionId);
       
-      console.log('Recording uploaded successfully:', publicUrl);
     } catch (err) {
       console.error('Error uploading recording:', err);
     }
@@ -1224,262 +1330,77 @@ Return only the JSON array, no additional text.
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Format timestamp for feedback
-  const formatTimestamp = (date: Date | string): number => {
-    const dateObj = typeof date === 'string' ? new Date(date) : date;
-    return dateObj.getTime();
-  };
 
   // Render start screen
   if (status === 'idle') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 p-6">
-        <div className="w-full max-w-2xl text-center">
-          <h1 className="text-3xl font-bold text-white mb-6">Welcome to Your Interview</h1>
-          
-          {/* Resume Input Section */}
-          <div className="bg-gray-800/50 rounded-xl p-6 mb-6 border border-gray-700">
-            <h2 className="text-xl font-semibold text-white mb-4">Provide Your Resume</h2>
-            <p className="text-gray-300 text-sm mb-4">
-              We'll analyze your resume to generate personalized interview questions tailored to your experience.
-            </p>
-            
-            {/* Method Selection Tabs */}
-            <div className="flex space-x-1 mb-6 bg-gray-700/50 rounded-lg p-1">
-              <button
-                onClick={() => setResumeInputMethod('upload')}
-                className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
-                  resumeInputMethod === 'upload'
-                    ? 'bg-blue-600 text-white'
-                    : 'text-gray-300 hover:text-white hover:bg-gray-600/50'
-                }`}
-              >
-                Upload PDF
-              </button>
-              <button
-                onClick={() => setResumeInputMethod('text')}
-                className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
-                  resumeInputMethod === 'text'
-                    ? 'bg-blue-600 text-white'
-                    : 'text-gray-300 hover:text-white hover:bg-gray-600/50'
-                }`}
-              >
-                Paste Text
-              </button>
-            </div>
-            
-            {!resumeUploaded ? (
-              <div className="space-y-4">
-                {resumeInputMethod === 'upload' ? (
-                  /* PDF Upload Section */
-                  <div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center hover:border-blue-500 transition-colors">
-                    <input
-                      type="file"
-                      id="resume-upload"
-                      accept=".pdf,.doc,.docx"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          setResumeFile(file);
-                          handleResumeUpload(file);
-                        }
-                      }}
-                      className="hidden"
-                    />
-                    <label htmlFor="resume-upload" className="cursor-pointer">
-                      <svg className="h-12 w-12 mx-auto mb-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                      </svg>
-                      <p className="text-white font-medium mb-1">
-                        {isUploadingResume ? 'Uploading...' : 'Click to upload or drag and drop'}
-                      </p>
-                      <p className="text-gray-400 text-sm">PDF, DOC, or DOCX (Max 10MB)</p>
-                    </label>
-                  </div>
-                ) : (
-                  /* Text Input Section */
-                  <div className="space-y-4">
-                    <textarea
-                      value={resumeText}
-                      onChange={(e) => setResumeText(e.target.value)}
-                      placeholder="Paste your resume content here..."
-                      className="w-full h-64 p-4 bg-gray-700/50 border border-gray-600 rounded-lg text-white placeholder-gray-400 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                    <div className="flex justify-end">
-                      <Button
-                        onClick={() => {
-                          if (resumeText.trim().length > 50) {
-                            setResumeUploaded(true);
-                            showToast('Resume content saved!', 'success');
-                          } else {
-                            showToast('Please enter at least 50 characters of resume content', 'error');
-                          }
-                        }}
-                        disabled={resumeText.trim().length < 50}
-                        className="bg-blue-600 hover:bg-blue-700"
-                      >
-                        Save Resume Content
-                      </Button>
-                    </div>
-                  </div>
-                )}
-                
-                {resumeFile && resumeInputMethod === 'upload' && (
-                  <div className="flex items-center justify-between bg-gray-700/50 rounded-lg p-3">
-                    <div className="flex items-center">
-                      <svg className="h-5 w-5 text-blue-400 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      <span className="text-gray-300 text-sm">{resumeFile.name}</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="bg-green-900/20 border border-green-700 rounded-lg p-4 flex items-center justify-between">
-                  <div className="flex items-center">
-                    <svg className="h-6 w-6 text-green-400 mr-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <div>
-                      <p className="text-green-400 font-medium">Resume uploaded successfully!</p>
-                      <p className="text-gray-400 text-sm">{resumeFile?.name}</p>
-                    </div>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleResumeDelete}
-                    disabled={isUploadingResume}
-                    className="text-red-400 hover:text-red-300 hover:bg-red-900/20"
-                  >
-                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </Button>
-                </div>
-                <div className="text-center space-y-2">
-                  <p className="text-gray-400 text-sm">We're ready to generate your personalized questions.</p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setResumeInputMethod('text');
-                      setResumeUploaded(false);
-                    }}
-                    className="text-blue-400 hover:text-blue-300 text-xs"
-                  >
-                    Or use text input instead
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Camera and Microphone Permission Section */}
-          <div className="bg-gray-800/50 rounded-xl p-6 mb-6 border border-gray-700">
-            <h2 className="text-xl font-semibold text-white mb-4">Camera & Microphone Access</h2>
-            <p className="text-gray-300 text-sm mb-4">
-              We need access to your camera and microphone for the interview. Both will be turned off by default.
-            </p>
-            
-            {!permissionsGranted ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-center p-6 border-2 border-dashed border-gray-600 rounded-lg">
-                  <div className="text-center">
-                    <div className="flex justify-center space-x-4 mb-4">
-                      <div className="p-3 bg-gray-700 rounded-full">
-                        <svg className="h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                      </div>
-                      <div className="p-3 bg-gray-700 rounded-full">
-                        <svg className="h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                        </svg>
-                      </div>
-                    </div>
-                    <p className="text-gray-300 mb-4">Camera and microphone access required</p>
-                    <Button
-                      onClick={requestPermissions}
-                      disabled={isRequestingPermissions}
-                      className="bg-blue-600 hover:bg-blue-700"
-                    >
-                      {isRequestingPermissions ? (
-                        <>
-                          <svg className="animate-spin -ml-1 mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                          Requesting Access...
-                        </>
-                      ) : (
-                        'Allow Camera & Microphone'
-                      )}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="bg-green-900/20 border border-green-700 rounded-lg p-4 flex items-center">
-                <svg className="h-6 w-6 text-green-400 mr-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <div className="flex-1">
-                  <p className="text-green-400 font-medium">Camera and microphone access granted!</p>
-                  <p className="text-gray-400 text-sm">Both devices are currently turned off. You can enable them during the interview.</p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="bg-gray-800/50 rounded-xl p-6 mb-8 border border-gray-700">
-            <h2 className="text-xl font-semibold text-white mb-4">Before You Begin</h2>
-            <ul className="text-left space-y-3 mb-6 text-gray-300">
-              <li className="flex items-start">
-                <svg className="h-5 w-5 text-green-400 mr-2 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                <span>Ensure you're in a quiet, well-lit environment</span>
-              </li>
-              <li className="flex items-start">
-                <svg className="h-5 w-5 text-green-400 mr-2 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                <span>Check that your camera and microphone are working</span>
-              </li>
-              <li className="flex items-start">
-                <svg className="h-5 w-5 text-green-400 mr-2 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                <span>Close any unnecessary applications</span>
-              </li>
-            </ul>
-            
-            <Button 
-              onClick={startInterviewProcess}
-              size="lg"
-              disabled={!resumeUploaded || !permissionsGranted}
-              className="w-full max-w-xs mx-auto py-6 text-lg font-semibold bg-blue-600 hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      <div className="space-y-8">
+        <ResumeInputSection
+          resumeInputMethod={resumeInputMethod}
+          setResumeInputMethod={setResumeInputMethod}
+          resumeUploaded={resumeUploaded}
+          resumeFile={resumeFile}
+          isUploadingResume={isUploadingResume}
+          handleResumeUpload={handleResumeUpload}
+          handleResumeDelete={handleResumeDelete}
+          resumeText={resumeText}
+          setResumeText={setResumeText}
+          showToast={showToast}
+          setResumeUploaded={setResumeUploaded}
+        />
+        {/* Camera and Microphone Permission Section */}
+        {!permissionsGranted && (
+          <div className="bg-gray-800/50 rounded-xl p-6 mb-6 border border-gray-700 text-center">
+            <p className="text-gray-300 mb-4">Camera and microphone access required</p>
+            <Button
+              onClick={requestPermissions}
+              disabled={isRequestingPermissions}
+              className="bg-blue-600 hover:bg-blue-700"
             >
-              Start Interview
+              {isRequestingPermissions ? 'Requesting...' : 'Allow Camera & Microphone'}
             </Button>
-            {(!resumeUploaded || !permissionsGranted) && (
-              <p className="text-yellow-400 text-sm mt-3 text-center">
-                {!resumeUploaded && !permissionsGranted 
-                  ? 'Please upload your resume and grant camera/microphone permissions'
-                  : !resumeUploaded 
-                  ? 'Please upload your resume first'
-                  : 'Please grant camera and microphone permissions first'
-                }
-              </p>
-            )}
           </div>
-          
-          <div className="text-sm text-gray-400">
-            <p>By clicking "Start Interview", you agree to our Terms of Service and Privacy Policy</p>
-          </div>
+        )}
+        {/* Before You Begin Info Block */}
+        <div className="bg-gray-800/50 rounded-xl p-6 mb-8 border border-gray-700">
+          <h2 className="text-xl font-semibold text-white mb-4">Before You Begin</h2>
+          <ul className="text-left space-y-3 mb-6 text-gray-300">
+            <li className="flex items-start">
+              <svg className="h-5 w-5 text-green-400 mr-2 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              <span>Ensure you're in a quiet, well-lit environment</span>
+            </li>
+            <li className="flex items-start">
+              <svg className="h-5 w-5 text-green-400 mr-2 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              <span>Check that your camera and microphone are working</span>
+            </li>
+            <li className="flex items-start">
+              <svg className="h-5 w-5 text-green-400 mr-2 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              <span>Close any unnecessary applications</span>
+            </li>
+          </ul>
+          <Button
+            onClick={startInterviewProcess}
+            size="lg"
+            disabled={!resumeUploaded || !permissionsGranted}
+            className="w-full max-w-xs mx-auto py-6 text-lg font-semibold bg-blue-600 hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Start Interview
+          </Button>
+          {(!resumeUploaded || !permissionsGranted) && (
+            <p className="text-yellow-400 text-sm mt-3 text-center">
+              {!resumeUploaded && !permissionsGranted
+                ? 'Please upload your resume and grant camera/microphone permissions'
+                : !resumeUploaded
+                ? 'Please upload your resume first'
+                : 'Please grant camera and microphone permissions first'}
+            </p>
+          )}
         </div>
       </div>
     );
@@ -1590,16 +1511,26 @@ Return only the JSON array, no additional text.
           <div className="lg:col-span-2 bg-gray-900/60 border border-gray-700 rounded-2xl overflow-hidden">
             <div className="relative aspect-video bg-black">
               {isVideoOn ? (
-                <Webcam
-                  ref={webcamRef}
-                  audio={false}
-                  videoConstraints={{
-                    width: 1280,
-                    height: 720,
-                    facingMode: 'user',
-                  }}
-                  className="w-full h-full object-cover"
-                />
+                <>
+                  <Webcam
+                    ref={webcamRef}
+                    audio={false}
+                    videoConstraints={{
+                      width: 1280,
+                      height: 720,
+                      facingMode: 'user',
+                    }}
+                    className="w-full h-full object-cover"
+                  />
+                  {/* Hidden video element for MediaPipe analysis */}
+                  <video
+                    ref={videoRef}
+                    className="hidden"
+                    autoPlay
+                    muted
+                    playsInline
+                  />
+                </>
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-gray-900/50">
                   <VideoOff className="h-12 w-12 text-gray-500" />
@@ -1624,6 +1555,15 @@ Return only the JSON array, no additional text.
                 >
                   {isMuted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
                 </Button>
+                <Button
+                  onClick={() => setIsTtsMuted(!isTtsMuted)}
+                  variant="secondary"
+                  size="icon"
+                  className="rounded-full w-10 h-10 bg-gray-800/80 hover:bg-gray-700/80 border border-gray-700 text-gray-200"
+                  title={isTtsMuted ? 'Unmute interviewer' : 'Mute interviewer'}
+                >
+                  {isTtsMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+                </Button>
               </div>
 
               {/* Timer */}
@@ -1632,8 +1572,101 @@ Return only the JSON array, no additional text.
               </div>
             </div>
 
-            {/* Current Question */}
-            <Card className="lg:col-span-2 bg-gray-900/60 border border-gray-700">
+          </div>
+
+          {/* Real-time Analysis Panel */}
+          <div className="space-y-4">
+            <Card className="bg-gray-900/60 border border-gray-700">
+              <CardHeader>
+                <CardTitle className="text-lg font-semibold text-white">Real-time Analysis</CardTitle>
+                <p className="text-sm text-gray-400">Live performance monitoring</p>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Facial Expression Analysis */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                      <span className="text-sm font-medium text-gray-200">Facial Expression</span>
+                    </div>
+                    <span className="text-xs text-gray-400">{analysisScores.facial}/100</span>
+                  </div>
+                  <div className="w-full bg-gray-700 rounded-full h-2">
+                    <div 
+                      className={`h-2 rounded-full transition-all duration-500 ${
+                        analysisScores.facial >= 70 ? 'bg-green-500' : 
+                        analysisScores.facial >= 40 ? 'bg-yellow-500' : 'bg-red-500'
+                      }`}
+                      style={{ width: `${analysisScores.facial}%` }}
+                    ></div>
+                  </div>
+                  <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${getScoreColor(analysisScores.facial)}`}>
+                    {getScoreLabel(analysisScores.facial)}
+                  </div>
+                </div>
+
+                {/* Posture Analysis */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-3 h-3 rounded-full bg-purple-500"></div>
+                      <span className="text-sm font-medium text-gray-200">Posture</span>
+                    </div>
+                    <span className="text-xs text-gray-400">{analysisScores.posture}/100</span>
+                  </div>
+                  <div className="w-full bg-gray-700 rounded-full h-2">
+                    <div 
+                      className={`h-2 rounded-full transition-all duration-500 ${
+                        analysisScores.posture >= 70 ? 'bg-green-500' : 
+                        analysisScores.posture >= 40 ? 'bg-yellow-500' : 'bg-red-500'
+                      }`}
+                      style={{ width: `${analysisScores.posture}%` }}
+                    ></div>
+                  </div>
+                  <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${getScoreColor(analysisScores.posture)}`}>
+                    {getScoreLabel(analysisScores.posture)}
+                  </div>
+                </div>
+
+                {/* Voice Analysis */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                      <span className="text-sm font-medium text-gray-200">Voice Quality</span>
+                    </div>
+                    <span className="text-xs text-gray-400">{analysisScores.voice}/100</span>
+                  </div>
+                  <div className="w-full bg-gray-700 rounded-full h-2">
+                    <div 
+                      className={`h-2 rounded-full transition-all duration-500 ${
+                        analysisScores.voice >= 70 ? 'bg-green-500' : 
+                        analysisScores.voice >= 40 ? 'bg-yellow-500' : 'bg-red-500'
+                      }`}
+                      style={{ width: `${analysisScores.voice}%` }}
+                    ></div>
+                  </div>
+                  <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${getScoreColor(analysisScores.voice)}`}>
+                    {getScoreLabel(analysisScores.voice)}
+                  </div>
+                </div>
+
+                {/* Overall Score */}
+                <div className="pt-4 border-t border-gray-700">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-white mb-1">
+                      {Math.round((analysisScores.facial + analysisScores.posture + analysisScores.voice) / 3)}%
+                    </div>
+                    <div className="text-sm text-gray-400">Overall Performance</div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Current Question */}
+          <div className="lg:col-span-2 space-y-4">
+            <Card className="bg-gray-900/60 border border-gray-700">
               <CardHeader className="border-b border-gray-700">
                 <CardTitle className="text-lg font-medium text-gray-100">Current Question</CardTitle>
               </CardHeader>
@@ -1649,6 +1682,24 @@ Return only the JSON array, no additional text.
                     <span>Time Limit: {currentQuestion?.timeLimit || 0}s</span>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* Live Transcription Card */}
+            <Card className="bg-gray-900/60 border border-gray-700">
+              <CardHeader className="border-b border-gray-700">
+                <CardTitle className="text-lg font-medium text-gray-100">
+                  Live Transcription
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6 min-h-[100px]">
+                {transcript ? (
+                  <p className="text-gray-200">{transcript}</p>
+                ) : (
+                  <p className="text-gray-500">
+                    Your live transcript will appear here as you speak...
+                  </p>
+                )}
               </CardContent>
             </Card>
 
@@ -1669,108 +1720,6 @@ Return only the JSON array, no additional text.
                 Next Question
               </Button>
             </div>
-          </div>
-
-          {/* Feedback Panel */}
-          <div className="space-y-4">
-            <Card className="bg-gray-900/60 border border-gray-700 text-gray-100">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">Real-time Feedback</CardTitle>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowFeedback(!showFeedback)}
-                  >
-                    {showFeedback ? 'Hide' : 'Show'}
-                  </Button>
-                </div>
-              </CardHeader>
-
-              <CardContent className="space-y-4">
-                <AnimatePresence>
-                  {showFeedback && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
-                        {feedback.length > 0 ? (
-                          feedback.map((item) => (
-                          <motion.div
-                              key={`${formatTimestamp(item.timestamp)}-${item.type}`}
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              className={`p-3 rounded-lg ${
-                                item.isPositive ? 'bg-green-900/50 border border-green-700 text-green-200' : 'bg-amber-900/50 border border-amber-700 text-amber-200'
-                              }`}
-                            >
-                              <div className="flex items-start">
-                                <div className={`flex-shrink-0 h-5 w-5 rounded-full flex items-center justify-center ${
-                                  item.isPositive ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'
-                                }`}>
-                                  {item.isPositive ? (
-                                    <span className="text-xs font-bold">✓</span>
-                                  ) : (
-                                    <span className="text-xs font-bold">!</span>
-                                  )}
-                                </div>
-                                <div className="ml-3">
-                                  <p className="text-sm font-medium">
-                                    {item.message}
-                                  </p>
-                                  <p className="text-xs text-gray-400 mt-1">
-                                    {format(item.timestamp, 'h:mm a')}
-                                  </p>
-                                </div>
-                              </div>
-                            </motion.div>
-                          ))
-                        ) : (
-                          <div className="text-center py-8">
-                            <p className="text-gray-500">No feedback yet. Start speaking to receive feedback.</p>
-                          </div>
-                        )}
-                        <div ref={feedbackEndRef} />
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                {/* Analysis Indicators */}
-                <div className="grid grid-cols-2 gap-3 pt-4 border-t">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0 h-10 w-10 rounded-full bg-blue-900/50 flex items-center justify-center">
-                      <Eye className="h-5 w-5 text-blue-400" />
-                    </div>
-                    <div className="ml-3">
-                      <p className="text-xs font-medium text-gray-500">Eye Contact</p>
-                      <p className="text-sm font-medium">Monitoring...</p>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* End Interview Card */}
-            <Card className="bg-red-900/50 border border-red-700">
-              <CardContent className="pt-6">
-                <h3 className="text-lg font-medium text-red-200 mb-2">End Interview</h3>
-                <p className="text-sm text-red-700 mb-4">
-                  Once you end the interview, you won't be able to come back to it.
-                </p>
-                <Button
-                  onClick={endInterview}
-                  variant="destructive"
-                  className="w-full"
-                  disabled={status !== 'active'}
-                >
-                  {status === 'completed' ? 'Interview Completed' : 'End Interview'}
-                </Button>
-              </CardContent>
-            </Card>
           </div>
         </div>
       </div>

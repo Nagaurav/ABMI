@@ -44,6 +44,43 @@ app.use('/api/dashboard', dashboardRoutes);
 // ================== Resume upload setup ==================
 const upload = multer({ dest: 'uploads/' });
 
+// ================== PDF parsing endpoint ==================
+app.post('/api/parse-pdf', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'PDF file required' });
+    }
+
+    const buffer = fs.readFileSync(req.file.path);
+    const parsed = await pdf(buffer);
+    
+    // Clean up uploaded file
+    fs.unlinkSync(req.file.path);
+    
+    res.json({ 
+      ok: true, 
+      text: parsed.text || '',
+      pages: parsed.numpages || 0
+    });
+  } catch (error) {
+    console.error('[parse-pdf] error:', error.message);
+    
+    // Clean up file if it exists
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (cleanupError) {
+        console.error('[parse-pdf] cleanup error:', cleanupError.message);
+      }
+    }
+    
+    res.status(500).json({ 
+      error: 'Failed to parse PDF file',
+      details: error.message 
+    });
+  }
+});
+
 // New unified endpoint used by frontend
 app.post('/uploads/resume', upload.single('resume'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'File required' });

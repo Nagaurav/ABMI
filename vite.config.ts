@@ -35,7 +35,7 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
+        // no rewrite: keep /api prefix so Express sees /api/*
       }
     },
     hmr: {

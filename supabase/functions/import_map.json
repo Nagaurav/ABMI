@@ -1,0 +1,8 @@
+{
+  "imports": {
+    "npm:@supabase/supabase-js@2.39.7": "https://esm.sh/@supabase/supabase-js@2.39.7",
+    "npm:pdf-parse@1.1.1": "https://esm.sh/pdf-parse@1.1.1",
+    "npm:mammoth@1.7.0": "https://esm.sh/mammoth@1.7.0"
+  }
+}
+

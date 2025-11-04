@@ -9,6 +9,7 @@ import {
   Loader2,
   AlertCircle,
 } from 'lucide-react';
+import { useParams } from 'react-router-dom';
 import {
   AreaChart,
   Area,
@@ -34,6 +35,7 @@ import {
 const COLORS = ['#4f46e5', '#3b82f6', '#6366f1', '#8b5cf6'];
 
 function Analysis() {
+  const { sessionId } = useParams<{ sessionId?: string }>();
   const {
     performanceData,
     skillsData,
@@ -140,7 +142,10 @@ function Analysis() {
         <div>
           <h1 className="text-3xl font-bold">Performance Analysis</h1>
           <p className="text-muted-foreground mt-2">
-            Detailed breakdown of your interview performance and AI-driven insights
+            {sessionId 
+              ? `Analysis for interview session: ${sessionId.slice(0, 8)}...`
+              : 'Detailed breakdown of your interview performance and AI-driven insights'
+            }
           </p>
         </div>
         <div className="flex gap-3">

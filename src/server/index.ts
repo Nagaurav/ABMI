@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import analysisRoutes from './api/analysis';
+import parsePdfRoutes from './api/parsePdf';
 
 export const createServer = () => {
   const app = express();
@@ -12,6 +13,7 @@ export const createServer = () => {
   
   // API Routes
   app.use('/api/analysis', analysisRoutes);
+  app.use('/api', parsePdfRoutes);
   
   // Health check endpoint
   app.get('/health', (req, res) => {
